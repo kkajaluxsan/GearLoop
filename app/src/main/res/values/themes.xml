@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose owns all styling. This shell only removes the platform action bar
+         and paints the window while the first frame is composing. -->
+    <style name="Theme.GearLoop" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/chalk_100</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+</resources>

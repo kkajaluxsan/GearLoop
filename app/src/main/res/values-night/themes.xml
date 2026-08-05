@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The window that is painted while the first frame composes. Without this
+         the app flashes white on launch in dark mode, which is the first thing
+         anyone would notice. -->
+    <style name="Theme.GearLoop" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/chalk_100</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>

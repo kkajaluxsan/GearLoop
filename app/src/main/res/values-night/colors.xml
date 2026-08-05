@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The dark equivalents of the handful of tokens the platform shell needs
+         before Compose starts. Kept in step with DarkPalette in ui/theme/. -->
+    <color name="chalk_100">#07130F</color>
+    <color name="pine_800">#164137</color>
+    <!-- Hi-vis does not follow the theme. It marks action and safety. -->
+    <color name="hivis_500">#D6E32E</color>
+</resources>

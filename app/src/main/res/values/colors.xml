@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Only the handful of tokens the platform shell needs before Compose starts.
+         The full palette lives in ui/theme/Color.kt -->
+    <color name="chalk_100">#EDEFEA</color>
+    <color name="pine_800">#10352E</color>
+    <color name="hivis_500">#D6E32E</color>
+</resources>

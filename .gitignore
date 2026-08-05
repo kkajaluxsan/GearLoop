@@ -1,0 +1,20 @@
+*.iml
+.gradle/
+/local.properties
+/.idea/
+.DS_Store
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Build output. The original rule was `/build`, which only matches the root —
+# app/build is 247 MB and would have gone straight into the first commit.
+build/
+.kotlin/
+
+# Agent tooling. .claude/skills holds symlinks into ../../skills (a separate
+# clone of davidondrej/skills) written as absolute paths on this machine, so
+# committing them would push links that resolve nowhere for anyone else.
+.claude/
+.cursor/
