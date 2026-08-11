@@ -8,12 +8,14 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -33,7 +35,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.gearloop.app.data.Demo
 import com.gearloop.app.data.GearItem
@@ -267,22 +271,20 @@ fun S21FairnessBoot(nav: Nav) {
             deltaAmount = remaining,
         )
 
-        VGap(Space.m)
-        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                if (remaining > 0) "${lkr(remaining)} SHORT" else "BALANCED",
-                style = GearType.dataL,
-                color = if (remaining > 0) GearColor.Warning700 else GearColor.Success500,
-            )
-            VGap(4.dp)
-            Text(
-                if (remaining > 0) "Their gear is worth $percent% more"
-                else "Both sides are within 10% of each other",
-                style = GearType.bodyS,
-                color = GearText.secondary,
-                textAlign = TextAlign.Center,
-            )
-        }
+        VGap(Space.s)
+        // The meter above already prints "LKR 19,000 · 31% UNFAIR" in the colour
+        // of the zone it is in. This used to repeat both numbers in a second
+        // headline and then a third time in the sentence — and the headline was
+        // hardcoded amber, so a trade the meter had called red was called amber
+        // directly underneath it. One reading, then one plain-English sentence.
+        Text(
+            text = if (remaining > 0) "Their gear is worth $percent% more"
+            else "Both sides are within 10% of each other",
+            style = GearType.bodyM,
+            color = GearText.secondary,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
+        )
 
         VGap(Space.l)
         Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
@@ -296,7 +298,10 @@ fun S21FairnessBoot(nav: Nav) {
             ValuationColumn(
                 item = Demo.santaCruz,
                 rows = Demo.santaCruzValuation,
-                confidence = "MEDIUM",
+                // Reads as the same kind of statement as the one beside it.
+                // "HIGH CONFIDENCE" next to a bare "MEDIUM" invited the question
+                // "medium what?".
+                confidence = "MEDIUM CONFIDENCE",
                 confidenceColor = GearColor.Warning700,
                 modifier = Modifier.weight(1f),
             )
@@ -595,7 +600,9 @@ fun S23CyclePreview(nav: Nav) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Eyebrow("Acceptance")
             Spacer(Modifier.weight(1f))
-            Text("2 OF 3", style = GearType.dataL, color = GearText.primary)
+            // "2 / 3", not "2 OF 3": the app counts this way on S-15 and S-28,
+            // and a capital O set in mono beside two digits reads as a zero.
+            Text("2 / 3", style = GearType.dataL, color = GearText.primary)
         }
         VGap(Space.s)
         AcceptRow(Demo.nirmal, "accepted", true)
@@ -681,22 +688,39 @@ fun LoopDiagram(modifier: Modifier = Modifier, compact: Boolean = false) {
         Demo.kayak.shortTitle to 44_000,
     )
 
-    Box(modifier) {
+    // The canvas and the avatars have to agree on where a node *is*. They used
+    // to be positioned two different ways — the circles by trigonometry, the
+    // labels by Box alignment — so the hi-vis ring was struck through the name
+    // under it and an arrowhead landed in the middle of "gives Burton". The
+    // geometry is settled once here and both read it.
+    val avatarSize = if (compact) 40.dp else 48.dp
+    val nodeWidth = if (compact) 96.dp else 116.dp
+
+    BoxWithConstraints(modifier) {
+        val density = LocalDensity.current
+        val wPx = with(density) { maxWidth.toPx() }
+        val hPx = with(density) { maxHeight.toPx() }
+        val cx = wPx / 2f
+        val radius = minOf(wPx, hPx) * 0.30f
+        // Derived, not a fraction of the height: the top node's avatar has to
+        // clear the top edge, and at the compact size a fraction that worked for
+        // the 300dp diagram cropped it.
+        val cy = radius + with(density) { (avatarSize / 2 + 4.dp).toPx() }
+        // Nodes at 12, 4 and 8 o'clock.
+        val centres = listOf(-90.0, 30.0, 150.0).map {
+            Offset(
+                cx + (radius * cos(Math.toRadians(it))).toFloat(),
+                cy + (radius * sin(Math.toRadians(it))).toFloat(),
+            )
+        }
+        // How far an arc has to stop short of a node to clear the ring round it.
+        val nodeClearPx = with(density) { (avatarSize / 2 + 8.dp).toPx() }
+
         // The loop is drawn, so its two colours are read before the draw starts.
         val arcColor = GearColor.Marine500
         val youRing = GearColor.HiVis500
         Canvas(Modifier.fillMaxSize()) {
-            val cx = size.width / 2f
-            val cy = size.height * 0.46f
-            val r = minOf(size.width, size.height) * 0.33f
-            // Nodes at 12, 4 and 8 o'clock.
-            val angles = listOf(-90.0, 30.0, 150.0)
-            val pts = angles.map {
-                Offset(
-                    cx + (r * cos(Math.toRadians(it))).toFloat(),
-                    cy + (r * sin(Math.toRadians(it))).toFloat(),
-                )
-            }
+            val pts = centres
 
             pts.forEachIndexed { i, from ->
                 val to = pts[(i + 1) % 3]
@@ -704,8 +728,6 @@ fun LoopDiagram(modifier: Modifier = Modifier, compact: Boolean = false) {
                 val mid = Offset((from.x + to.x) / 2, (from.y + to.y) / 2)
                 val ctrl = Offset(mid.x + (mid.x - cx) * 0.42f, mid.y + (mid.y - cy) * 0.42f)
 
-                val trimStart = 0.16f
-                val trimEnd = 0.84f
                 fun pointAt(t: Float): Offset {
                     val u = 1 - t
                     return Offset(
@@ -713,6 +735,25 @@ fun LoopDiagram(modifier: Modifier = Modifier, compact: Boolean = false) {
                         u * u * from.y + 2 * u * t * ctrl.y + t * t * to.y,
                     )
                 }
+
+                // Trim each end back to where the arc actually leaves the ring,
+                // rather than to a fixed fraction that only happened to look
+                // right at one diagram size.
+                fun trimFrom(anchor: Offset, ascending: Boolean): Float {
+                    var t = if (ascending) 0f else 1f
+                    val step = if (ascending) 0.01f else -0.01f
+                    repeat(60) {
+                        val p = pointAt(t)
+                        val dxa = p.x - anchor.x
+                        val dya = p.y - anchor.y
+                        if (dxa * dxa + dya * dya >= nodeClearPx * nodeClearPx) return t
+                        t += step
+                    }
+                    return t
+                }
+
+                val trimStart = trimFrom(from, ascending = true)
+                val trimEnd = trimFrom(to, ascending = false)
 
                 val path = Path().apply {
                     val s = pointAt(trimStart)
@@ -748,18 +789,37 @@ fun LoopDiagram(modifier: Modifier = Modifier, compact: Boolean = false) {
                 drawPath(arrow, arcColor)
             }
 
-            // Your node carries a hi-vis ring.
-            drawCircle(youRing, 30.dp.toPx(), pts[0], style = Stroke(width = 3.dp.toPx()))
+            // Your node carries a hi-vis ring, just outside the avatar.
+            drawCircle(
+                youRing,
+                (avatarSize / 2).toPx() + 5.dp.toPx(),
+                centres[0],
+                style = Stroke(width = 3.dp.toPx()),
+            )
         }
 
-        // Avatars and labels, placed over the canvas.
+        // Avatars and labels, laid over the canvas on the same coordinates.
         val labelStyle = if (compact) GearType.labelXs else GearType.labelM
-        Column(Modifier.fillMaxSize()) {
-            Box(Modifier.fillMaxWidth().weight(1f)) {
-                LoopNode(people[0], gives[0], Modifier.align(Alignment.TopCenter), compact, labelStyle)
-                LoopNode(people[2], gives[2], Modifier.align(Alignment.BottomStart), compact, labelStyle)
-                LoopNode(people[1], gives[1], Modifier.align(Alignment.BottomEnd), compact, labelStyle)
-            }
+        centres.forEachIndexed { i, centre ->
+            // 0 is Nirmal at the top, then Dinesh and Ayesha clockwise — the
+            // order the arcs are drawn in.
+            val person = people[i]
+            val gives = gives[i]
+            LoopNode(
+                person = person,
+                gives = gives,
+                compact = compact,
+                labelStyle = labelStyle,
+                avatarSize = avatarSize,
+                modifier = Modifier
+                    .width(nodeWidth)
+                    .offset {
+                        IntOffset(
+                            (centre.x - with(density) { nodeWidth.toPx() } / 2).roundToInt(),
+                            (centre.y - with(density) { avatarSize.toPx() } / 2).roundToInt(),
+                        )
+                    },
+            )
         }
     }
 }
@@ -768,16 +828,18 @@ fun LoopDiagram(modifier: Modifier = Modifier, compact: Boolean = false) {
 private fun LoopNode(
     person: Person,
     gives: Pair<String, Int>,
-    modifier: Modifier = Modifier,
     compact: Boolean,
     labelStyle: androidx.compose.ui.text.TextStyle,
+    avatarSize: androidx.compose.ui.unit.Dp,
+    modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier.width(if (compact) 96.dp else 116.dp),
+        modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Avatar(person, size = if (compact) 40.dp else 48.dp, showTierRing = true)
-        VGap(4.dp)
+        Avatar(person, size = avatarSize, showTierRing = true)
+        // Clears the hi-vis "you" ring, which is drawn 5dp outside the avatar.
+        VGap(9.dp)
         Text(
             person.name.split(" ").first(),
             style = labelStyle,

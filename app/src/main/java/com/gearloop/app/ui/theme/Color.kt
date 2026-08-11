@@ -86,6 +86,11 @@ object GearColor {
     val TierSilver: Color @Composable @ReadOnlyComposable get() = LocalPalette.current.tierSilver
     val TierGold: Color @Composable @ReadOnlyComposable get() = LocalPalette.current.tierGold
 
+    // The metal as a word rather than as a ring. See the note in Palette.kt.
+    val TierBronzeInk: Color @Composable @ReadOnlyComposable get() = LocalPalette.current.tierBronzeInk
+    val TierSilverInk: Color @Composable @ReadOnlyComposable get() = LocalPalette.current.tierSilverInk
+    val TierGoldInk: Color @Composable @ReadOnlyComposable get() = LocalPalette.current.tierGoldInk
+
     /**
      * Camera viewport shades. Darker than pine/900 so the hi-vis guides and
      * brackets read as an overlay on a live feed rather than as UI on a surface.

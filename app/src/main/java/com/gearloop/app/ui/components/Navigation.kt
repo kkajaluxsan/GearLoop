@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -84,17 +85,22 @@ fun AppBar(
             .padding(horizontal = Space.sm),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (onBack != null) {
-            GearIconButton(
-                icon = if (type == AppBarType.MODAL) Lucide.X else Lucide.ChevronLeft,
-                contentDescription = if (type == AppBarType.MODAL) "Close" else "Back",
-                onClick = onBack,
-                tone = if (onImage) IconButtonTone.ON_IMAGE else IconButtonTone.ON_LIGHT,
-                size = 40.dp,
-                iconSize = IconSize.l,
-            )
-        } else {
-            Spacer(Modifier.width(Space.s))
+        // A centred title is only centred if both ends weigh the same. The bar
+        // used to reserve a leading slot for a missing back button but not a
+        // trailing one for a missing action, so a screen with an action and no
+        // back button — "Swap", "Your gear", "Trust" — hung its title left of
+        // centre by half the width of the button.
+        Box(Modifier.width(AppBarSlot), contentAlignment = Alignment.CenterStart) {
+            if (onBack != null) {
+                GearIconButton(
+                    icon = if (type == AppBarType.MODAL) Lucide.X else Lucide.ChevronLeft,
+                    contentDescription = if (type == AppBarType.MODAL) "Close" else "Back",
+                    onClick = onBack,
+                    tone = if (onImage) IconButtonTone.ON_IMAGE else IconButtonTone.ON_LIGHT,
+                    size = 40.dp,
+                    iconSize = IconSize.l,
+                )
+            }
         }
         Column(
             Modifier.weight(1f).padding(horizontal = Space.s),
@@ -114,14 +120,17 @@ fun AppBar(
             }
         }
         Row(
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            Modifier.widthIn(min = AppBarSlot),
+            horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             actions?.invoke(RowScopeActions)
-            if (actions == null && onBack != null) Spacer(Modifier.width(40.dp))
         }
     }
 }
+
+/** The width both ends of the app bar reserve, so the title lands dead centre. */
+private val AppBarSlot = 40.dp
 
 /** Marker scope so app-bar actions read as a distinct slot at call sites. */
 object RowScopeActions
@@ -296,9 +305,15 @@ fun GearScreen(
     tabBar: (@Composable () -> Unit)? = null,
     scrollable: Boolean = true,
     contentPadding: Dp = Space.screen,
+    /**
+     * Set where the screen's own content runs a dark band up behind the status
+     * bar — a light-theme screen with a pine hero, which the shell would
+     * otherwise give dark icons and lose against it.
+     */
+    darkStatusBar: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    SystemBarIcons(darkSurface = false)
+    SystemBarIcons(darkSurface = darkStatusBar)
     // Hoisted rather than called inside the `then` branch: a remember that only
     // runs on one side of a condition is a slot-table hazard.
     val scroll = rememberSavedScrollState()

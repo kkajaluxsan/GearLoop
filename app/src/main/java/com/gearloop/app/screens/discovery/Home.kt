@@ -261,7 +261,10 @@ fun S05SearchResults(nav: Nav) {
     GearLazyScreen(
         appBar = {
             AppBar(
-                title = "Surfboards",
+                // The list is every listing in Jaffna, filtered — a bike, a
+                // tent and a cricket bat among them. Heading it "Surfboards"
+                // described a result set the screen has never shown.
+                title = "Gear in ${Demo.nirmal.area}",
                 onBack = { nav.back() },
                 actions = {
                     GearIconButton(Lucide.Map, "Map view", { nav.to("s29") }, size = 40.dp)

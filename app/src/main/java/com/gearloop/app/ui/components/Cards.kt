@@ -2,6 +2,7 @@ package com.gearloop.app.ui.components
 
 import com.gearloop.app.ui.theme.color
 import com.gearloop.app.ui.theme.accent
+import com.gearloop.app.ui.theme.ink
 import com.gearloop.app.ui.theme.Border
 import androidx.compose.ui.semantics.Role
 import com.gearloop.app.ui.preview.PreviewFrame
@@ -13,6 +14,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,6 +24,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -30,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -56,6 +60,13 @@ import com.gearloop.app.ui.theme.Space
 /** Content components — design brief §4.3. */
 
 enum class ListingLayout { GRID, LIST, WIDE }
+
+/**
+ * How far the "next free" ribbon sits above the photo's bottom edge, so the gear
+ * tag — which hangs 13 dp below that edge — passes underneath it rather than
+ * through the middle of it.
+ */
+private val UNAVAILABLE_STRIP_LIFT = 18.dp
 
 @Composable
 fun ListingCard(
@@ -91,7 +102,13 @@ private fun ListingCardGrid(item: GearItem, onClick: () -> Unit, modifier: Modif
                 modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
             )
             if (!item.available && item.nextFree != null) {
-                UnavailableStrip(item.nextFree, Modifier.align(Alignment.BottomCenter))
+                // Clear of the tag, which hangs 13dp below the photo's bottom
+                // edge and used to be drawn straight through the middle of this
+                // strip on the one card that has both.
+                UnavailableStrip(
+                    item.nextFree,
+                    Modifier.align(Alignment.BottomCenter).padding(bottom = UNAVAILABLE_STRIP_LIFT),
+                )
             }
             // The tag hangs off the bottom edge of the photo, the way a real one
             // hangs off the gear.
@@ -124,67 +141,108 @@ private fun ListingCardGrid(item: GearItem, onClick: () -> Unit, modifier: Modif
     }
 }
 
+/**
+ * Below this the row cannot hold the price and the fit stamp on one line.
+ *
+ * 96 dp of photograph, 24 dp of padding and gap, then roughly 250 dp for
+ * `LKR 2,800 / day` beside `PERFECT FIT`. A full-width row on a phone clears it
+ * with room to spare; the map's 300 dp pager card does not, and used to squeeze
+ * the stamp to "PE / RE" and stand the instant pill on end, one letter per line.
+ */
+private val LIST_ROW_COMFORTABLE = 372.dp
+
 @Composable
 private fun ListingCardList(item: GearItem, onClick: () -> Unit, modifier: Modifier, showFit: Boolean) {
     GearCard(modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onClick)) {
-        Row(Modifier.padding(8.dp), verticalAlignment = Alignment.Top) {
-            Box {
-                GearImage(
-                    res = item.hero,
-                    contentDescription = item.title,
-                    modifier = Modifier.size(96.dp),
-                    shape = GearShape.sm,
-                    dimmed = !item.available,
-                )
-                if (!item.available) {
-                    Box(
-                        Modifier
-                            .align(Alignment.BottomCenter)
-                            .fillMaxWidth()
-                            .background(GearColor.Chalk700.copy(alpha = 0.92f)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            "UNAVAILABLE",
-                            style = GearType.dataS,
-                            color = GearText.onDark,
-                            modifier = Modifier.padding(vertical = 3.dp),
-                        )
+        BoxWithConstraints {
+            val tight = maxWidth < LIST_ROW_COMFORTABLE
+            Row(Modifier.padding(8.dp), verticalAlignment = Alignment.Top) {
+                Box {
+                    GearImage(
+                        res = item.hero,
+                        contentDescription = item.title,
+                        modifier = Modifier.size(96.dp),
+                        shape = GearShape.sm,
+                        dimmed = !item.available,
+                    )
+                    if (!item.available) {
+                        Box(
+                            Modifier
+                                .align(Alignment.BottomCenter)
+                                .fillMaxWidth()
+                                .background(GearColor.Chalk700.copy(alpha = 0.92f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                "UNAVAILABLE",
+                                style = GearType.dataS,
+                                color = GearText.onDark,
+                                modifier = Modifier.padding(vertical = 3.dp),
+                            )
+                        }
                     }
                 }
-            }
-            Spacer(Modifier.width(Space.sm))
-            Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.Top) {
-                    Text(
-                        text = item.shortTitle,
-                        style = GearType.headingS,
-                        color = GearText.primary,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
+                Spacer(Modifier.width(Space.sm))
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.Top) {
+                        Text(
+                            text = item.shortTitle,
+                            style = GearType.headingS,
+                            color = GearText.primary,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        SaveHeart(item.saved)
+                    }
+                    Spacer(Modifier.height(5.dp))
+                    GearTag(
+                        text = if (tight) item.tagLineCompact else item.tagLine,
+                        tone = if (item.available) TagTone.HI_VIS else TagTone.MUTED,
                     )
-                    SaveHeart(item.saved)
-                }
-                Spacer(Modifier.height(5.dp))
-                GearTag(
-                    text = item.tagLine,
-                    tone = if (item.available) TagTone.HI_VIS else TagTone.MUTED,
-                )
-                Spacer(Modifier.height(7.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    PriceInline(item.pricePerDay)
-                    Spacer(Modifier.weight(1f))
-                    if (showFit) FitStamp(item.fit)
-                }
-                Spacer(Modifier.height(5.dp))
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(km(item.distanceKm), style = GearType.dataM, color = GearText.secondary)
-                    Text("·", style = GearType.dataM, color = GearColor.Chalk300)
-                    Text(item.owner.area, style = GearType.bodyS, color = GearText.tertiary)
-                    if (item.instantBook) {
-                        Spacer(Modifier.weight(1f))
-                        InstantBookPill()
+                    Spacer(Modifier.height(7.dp))
+                    if (tight) {
+                        // The verdict drops to its own line rather than fighting
+                        // the price for the last 60 dp.
+                        PriceInline(item.pricePerDay)
+                        if (showFit || item.instantBook) {
+                            Spacer(Modifier.height(6.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (showFit) FitStamp(item.fit)
+                                Spacer(Modifier.weight(1f))
+                                if (item.instantBook) InstantBookPill()
+                            }
+                        }
+                    } else {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            PriceInline(item.pricePerDay)
+                            Spacer(Modifier.weight(1f))
+                            if (showFit) FitStamp(item.fit)
+                        }
+                    }
+                    Spacer(Modifier.height(5.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(km(item.distanceKm), style = GearType.dataM, color = GearText.secondary)
+                        Text("·", style = GearType.dataM, color = GearColor.Chalk300)
+                        Text(
+                            text = item.owner.area,
+                            style = GearType.bodyS,
+                            color = GearText.tertiary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            // Only weighted when it is the last thing in the row.
+                            // Weighted against the spacer that pushes the pill
+                            // right, it gets half the space and ellipsises a
+                            // place name that fits perfectly well.
+                            modifier = if (tight) Modifier.weight(1f, fill = false) else Modifier,
+                        )
+                        if (item.instantBook && !tight) {
+                            Spacer(Modifier.weight(1f))
+                            InstantBookPill()
+                        }
                     }
                 }
             }
@@ -295,7 +353,15 @@ fun InstantBookPill(modifier: Modifier = Modifier) {
         horizontalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         GearIcon(Lucide.Zap, null, size = 12.dp, tint = GearColor.Pine900)
-        Text("Instant", style = GearType.labelXs, color = GearColor.Pine900)
+        // A pill is one word. Given no room it used to break to one letter per
+        // line and grow into a vertical strip down the side of the card.
+        Text(
+            text = "Instant",
+            style = GearType.labelXs,
+            color = GearColor.Pine900,
+            maxLines = 1,
+            softWrap = false,
+        )
     }
 }
 
@@ -457,8 +523,10 @@ fun TrustBadge(person: Person, modifier: Modifier = Modifier) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(3.dp),
     ) {
+        // Metal for the mark, ink for the word. The badge used to draw both in
+        // the metal, which put GOLD on its own tint at 2.9:1.
         GearIcon(Lucide.BadgeCheck, null, size = 12.dp, tint = person.tier.accent)
-        Text(person.tier.label, style = GearType.labelXs, color = person.tier.accent)
+        Text(person.tier.label, style = GearType.labelXs, color = person.tier.ink)
     }
 }
 
@@ -572,11 +640,17 @@ fun RatingBar(
             )
         }
         Spacer(Modifier.width(10.dp))
+        // 44dp fitted "100%" and "5 / 6" but not "★ 4.8", which wrapped onto a
+        // second line and pushed that one row out of alignment with the other
+        // five on the trust screen. The value never wraps; the track gives.
         Text(
             text = value ?: String.format("%.2f", fraction * 5f),
             style = GearType.dataM,
             color = GearText.primary,
-            modifier = Modifier.width(44.dp),
+            maxLines = 1,
+            softWrap = false,
+            textAlign = TextAlign.End,
+            modifier = Modifier.widthIn(min = 44.dp),
         )
     }
 }
@@ -699,6 +773,26 @@ private fun ListingCardLayoutsPreview() = PreviewFrame {
 private fun ListingCardTypePreview() = PreviewFrame {
     ListingCard(Demo.torq, {}, layout = ListingLayout.LIST)
     ListingCard(Demo.wetsuit, {}, layout = ListingLayout.LIST, showFit = false)
+}
+
+/**
+ * The list card in the width the map's pager gives it, beside the width a search
+ * result gets. This is the preview that would have caught the map card: at 300dp
+ * the price and the fit verdict cannot share a line, and the components that
+ * lost the argument buckled rather than pushing back.
+ */
+@GearPreview
+@Composable
+private fun ListingCardNarrowPreview() = PreviewFrame {
+    Box(Modifier.width(300.dp)) {
+        ListingCard(Demo.torq, {}, layout = ListingLayout.LIST)
+    }
+    Box(Modifier.width(386.dp)) {
+        ListingCard(Demo.torq, {}, layout = ListingLayout.LIST)
+    }
+    // Unavailable: the "next free" ribbon and the tag share the photo's bottom
+    // edge, and used to be drawn on top of one another.
+    ListingCard(Demo.wetsuit, {}, layout = ListingLayout.GRID)
 }
 
 @GearPreview

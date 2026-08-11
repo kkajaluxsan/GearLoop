@@ -293,15 +293,38 @@ fun LegendItem(
     }
 }
 
+/**
+ * A legend swatch.
+ *
+ * [underline] exists because a legend that doesn't draw what the grid draws is
+ * worse than no legend: "selected" and "booked" are both pine/800 cells and are
+ * told apart only by the hi-vis bar under a booked one, so the swatch has to
+ * carry the bar too. Without it the calendar keys read as one colour twice.
+ */
 @Composable
-fun SwatchBox(color: Color, modifier: Modifier = Modifier, bordered: Boolean = false) {
+fun SwatchBox(
+    color: Color,
+    modifier: Modifier = Modifier,
+    bordered: Boolean = false,
+    underline: Color? = null,
+) {
     Box(
         modifier
             .size(16.dp)
             .clip(GearShape.xs)
             .then(if (bordered) Modifier.border(Border.hair, GearSurface.border, GearShape.xs) else Modifier)
-            .background(color)
-    )
+            .background(color),
+        contentAlignment = Alignment.BottomCenter,
+    ) {
+        if (underline != null) {
+            Box(
+                Modifier
+                    .padding(bottom = 3.dp)
+                    .size(width = 8.dp, height = 2.dp)
+                    .background(underline)
+            )
+        }
+    }
 }
 
 /* ------------------------------------------------------------- previews */
@@ -378,4 +401,22 @@ private fun IconRowPreview() = PreviewFrame {
     IconRow(Lucide.Check, "Board", tint = GearColor.Success500)
     IconRow(Lucide.Check, "Fins ×3", tint = GearColor.Success500)
     IconRow(Lucide.X, "Wax (not included)", tint = GearColor.Chalk400, textColor = GearText.tertiary)
+}
+
+/**
+ * The calendar key, both calendars use.
+ *
+ * Worth a preview of its own because the failure it guards against is only
+ * visible with the entries side by side: "selected" and "booked" are the same
+ * pine fill, and the swatch has to reproduce the hi-vis bar that tells a booked
+ * cell apart or the legend says one thing twice.
+ */
+@GearPreview
+@Composable
+private fun CalendarLegendPreview() = PreviewFrame {
+    LegendItem("Available") { SwatchBox(GearSurface.card, bordered = true) }
+    LegendItem("Selected") { SwatchBox(GearColor.Pine800) }
+    LegendItem("In range") { SwatchBox(GearColor.HiVis200) }
+    LegendItem("Booked") { SwatchBox(GearColor.Pine800, underline = GearColor.HiVis500) }
+    LegendItem("Blocked") { SwatchBox(GearColor.Chalk200) }
 }

@@ -22,7 +22,7 @@ compileSdk 36, JVM target 17.
 
 `assembleRelease` produces a 10 MB APK — half the debug build, after R8 and
 resource shrinking — signed with the debug key so it installs directly.
-`testDebugUnitTest` runs the 37 tests over the search predicate, the fit
+`testDebugUnitTest` runs the 51 tests over the search predicate, the fit
 derivation and the contrast of all three palettes.
 
 The app opens on a **cover screen** that is also the demo control panel — the

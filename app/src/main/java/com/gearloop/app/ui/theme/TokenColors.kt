@@ -30,11 +30,25 @@ val Fit.color: Color
         Fit.UNKNOWN -> GearColor.Chalk500
     }
 
-/** The trust metals — deliberately outside the five ramps. */
+/**
+ * The trust metals — deliberately outside the five ramps.
+ *
+ * This is the ring drawn round an avatar and the icon inside a badge: a shape,
+ * held to 3:1. Writing the tier out as a word needs [ink] instead.
+ */
 val TrustTier.accent: Color
     @Composable @ReadOnlyComposable
     get() = when (this) {
         TrustTier.BRONZE -> GearColor.TierBronze
         TrustTier.SILVER -> GearColor.TierSilver
         TrustTier.GOLD -> GearColor.TierGold
+    }
+
+/** The tier written as text — dark enough to read on a card or on its own tint. */
+val TrustTier.ink: Color
+    @Composable @ReadOnlyComposable
+    get() = when (this) {
+        TrustTier.BRONZE -> GearColor.TierBronzeInk
+        TrustTier.SILVER -> GearColor.TierSilverInk
+        TrustTier.GOLD -> GearColor.TierGoldInk
     }

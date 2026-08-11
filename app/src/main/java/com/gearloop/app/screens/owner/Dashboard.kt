@@ -56,7 +56,7 @@ fun S24OwnerDashboard(nav: Nav) {
         Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
             StatTile("${Demo.OCCUPANCY}%", "Occupancy", Modifier.weight(1f))
             StatTile("${Demo.kavitha.listings}", "Listings", Modifier.weight(1f))
-            StatTile("★ ${Demo.kavitha.rating}", "Rating", Modifier.weight(1f))
+            StatTile("★ ${Demo.kavitha.ratingText}", "Rating", Modifier.weight(1f))
         }
 
         VGap(Space.l)
@@ -133,7 +133,7 @@ private fun EarningsHero() {
         }
         VGap(Space.sm)
         Text(
-            "Next payout ${lkr(Demo.NEXT_PAYOUT)} · Fri 31 Jul",
+            "Next payout ${lkr(Demo.NEXT_PAYOUT)} · ${Demo.NEXT_PAYOUT_DATE}",
             style = GearType.bodyS,
             color = GearColor.Chalk300,
         )

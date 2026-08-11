@@ -1,6 +1,7 @@
 package com.gearloop.app.screens.account
 
 import com.gearloop.app.ui.theme.GearSurface
+import com.gearloop.app.ui.theme.ink
 import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -62,7 +63,15 @@ fun S32TrustProfile(nav: Nav) {
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("${Demo.TRUST_SCORE}", style = GearType.dataXl, color = GearText.primary)
-                    Text("SILVER", style = GearType.labelXs, color = GearColor.HiVis600)
+                    // The tier, in the tier's own ink. This was hardcoded as the
+                    // word "SILVER" drawn in hi-vis/600 — the wrong colour
+                    // system for it, and 1.7:1 against the page, which is not a
+                    // dim label so much as an invisible one.
+                    Text(
+                        Demo.nirmal.tier.label,
+                        style = GearType.labelXs,
+                        color = Demo.nirmal.tier.ink,
+                    )
                 }
             }
             VGap(Space.m)
@@ -216,7 +225,7 @@ fun S37PublicProfile(nav: Nav) {
                 VGap(Space.m)
                 Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
                     StatTile("14", "Rentals", Modifier.weight(1f))
-                    StatTile("★ ${Demo.kavitha.rating}", "Rating", Modifier.weight(1f))
+                    StatTile("★ ${Demo.kavitha.ratingText}", "Rating", Modifier.weight(1f))
                     StatTile("92%", "Response", Modifier.weight(1f))
                 }
 

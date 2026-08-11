@@ -81,10 +81,23 @@ data class GearPalette(
     val danger500: Color,
     val danger100: Color,
 
-    // Trust tiers — a metal scale of its own
+    /**
+     * Trust tiers — a metal scale of its own, in the same two steps the semantic
+     * ramps use: the metal is the ring drawn round an avatar, the ink is the
+     * word written inside the badge.
+     *
+     * They are separate for the reason amber is: a colour chosen to look like
+     * the metal is nowhere near dark enough to be read as text. Silver measures
+     * 3.3:1 on a white card and gold 2.9:1 — both were being used as the label
+     * on `TrustBadge`, and the trust screen went further and wrote the tier in
+     * hi-vis/600, which is 1.7:1 and effectively invisible.
+     */
     val tierBronze: Color,
     val tierSilver: Color,
     val tierGold: Color,
+    val tierBronzeInk: Color,
+    val tierSilverInk: Color,
+    val tierGoldInk: Color,
 
     // Camera viewport. Already near-black, so it barely moves.
     val viewport: Color,
@@ -180,6 +193,11 @@ val LightPalette = GearPalette(
     tierBronze = Color(0xFF9C6B3F),
     tierSilver = Color(0xFF7C8478),
     tierGold = Color(0xFFB8860B),
+    // Each metal taken down until it clears 4.5:1 both on a white card and on
+    // its own 14 %-alpha tint, which is the quieter of the two.
+    tierBronzeInk = Color(0xFF7A5230),
+    tierSilverInk = Color(0xFF565C52),
+    tierGoldInk = Color(0xFF7E5905),
 
     viewport = Color(0xFF071713),
     viewportChip = Color(0xFF0E2A24),
@@ -280,6 +298,11 @@ val DarkPalette = GearPalette(
     tierBronze = Color(0xFFC79463),
     tierSilver = Color(0xFFA9B3A9),
     tierGold = Color(0xFFD9AE3C),
+    // On a dark tint the metal is already legible as ink, so the two steps meet
+    // — the same thing success, warning and danger do in this palette.
+    tierBronzeInk = Color(0xFFC79463),
+    tierSilverInk = Color(0xFFA9B3A9),
+    tierGoldInk = Color(0xFFD9AE3C),
 
     // The camera screens were already near-black; they barely move.
     viewport = Color(0xFF040C0A),
@@ -391,6 +414,12 @@ val WirePalette = GearPalette(
     tierBronze = Color(0xFF8A8A8A),
     tierSilver = Color(0xFF8A8A8A),
     tierGold = Color(0xFF8A8A8A),
+    // The three metals share one grey here, the way the semantic ramps do — a
+    // wireframe says "there is a tier badge", not which metal it is. The ink
+    // step is still separate, because it still has to be readable.
+    tierBronzeInk = Color(0xFF4A4A4A),
+    tierSilverInk = Color(0xFF4A4A4A),
+    tierGoldInk = Color(0xFF4A4A4A),
 
     // The camera screens stay dark. A viewport is a hole in the page, and in a
     // wireframe that reads better as a dark block than as another white panel.

@@ -48,6 +48,17 @@ data class Person(
     /** Monogram avatars — no stock faces standing in for people who don't exist. */
     val initials: String
         get() = name.split(" ").take(2).mapNotNull { it.firstOrNull() }.joinToString("")
+
+    /**
+     * `4.94` — two decimals, trailing zeros dropped.
+     *
+     * A rating is a number people act on, so it goes through here rather than
+     * being interpolated raw: a derived average prints as 4.944444444444445 if
+     * you let it, and the four screens that show this one would each have shown
+     * a different length of it.
+     */
+    val ratingText: String
+        get() = String.format("%.2f", rating).trimEnd('0').trimEnd('.')
 }
 
 data class GearItem(
@@ -134,6 +145,35 @@ data class SwapOffer(
         get() = if (giveValue == 0) 0 else Math.round(delta * 100f / giveValue)
 }
 
+/**
+ * A booking request waiting on the owner.
+ *
+ * [days] is here because the quoted price has to match the dates beside it: the
+ * inbox used to multiply the daily rate by three for every row, so a two-night
+ * request was priced as three and a five-night one as three as well.
+ */
+data class BookingRequest(
+    val renter: Person,
+    val item: GearItem,
+    val dates: String,
+    val days: Int,
+    /** Each request has its own clock; they were all showing the same countdown. */
+    val respondWithin: String,
+    val completedRentals: Int,
+    val onTimeReturns: Int,
+    val verified: Int,
+) {
+    val total: Int get() = item.pricePerDay * days
+
+    /** The rows behind the "trust breakdown" disclosure, per renter. */
+    val trustBreakdown: List<Pair<String, String>>
+        get() = listOf(
+            "Completed rentals" to "$completedRentals",
+            "On-time returns" to "$onTimeReturns%",
+            "Verification" to "$verified / 6",
+        )
+}
+
 data class InsightItem(
     val headline: String,
     val body: String,
@@ -170,12 +210,75 @@ data class ChatMessage(
 
 data class ScoreFactor(val label: String, val value: String, val progress: Float)
 
+/**
+ * How a listing's reviews are spread across the five star values, five-first.
+ *
+ * The count is the only thing written down. The review total, the average and
+ * the bar lengths are all read back off it, so the histogram, the "N reviews"
+ * label and the ★ figure on four different screens cannot disagree — which they
+ * did when the bars were percentages and the average was typed by hand.
+ */
+data class StarDistribution(val counts: List<Int>) {
+    init {
+        require(counts.size == 5) { "five star values, five counts" }
+    }
+
+    /** Reviews at [stars], where 5 is the first entry. */
+    fun at(stars: Int): Int = counts[5 - stars]
+
+    /** Share of the total, for the bar behind the count. */
+    fun fractionAt(stars: Int): Float = if (total == 0) 0f else at(stars).toFloat() / total
+
+    val total: Int get() = counts.sum()
+
+    val average: Double
+        get() = if (total == 0) 0.0
+        else counts.mapIndexed { i, n -> (5 - i) * n }.sum().toDouble() / total
+}
+
 data class VerificationStep(
     val title: String,
     val unlocks: String,
     val state: State,
 ) {
     enum class State { DONE, CURRENT, LOCKED }
+}
+
+/**
+ * One recorded mark on a piece of gear.
+ *
+ * The severity is the field that matters: it decides what the rubric caps a
+ * claim at, and it is quoted on S-15b, S-16, S-34 and the admin console. Holding
+ * it once is what stops the same ding being cosmetic on one screen and
+ * functional on the next.
+ */
+data class DamageMark(
+    val area: String,
+    val summary: String,
+    val severity: Severity,
+    val note: String,
+    val recordedAt: String,
+) {
+    enum class Severity(val label: String, val capPercent: Int, val rubric: String) {
+        COSMETIC(
+            "Cosmetic", 0,
+            "Marks the surface only. Doesn't affect how it rides, and never triggers a claim on its own.",
+        ),
+        FUNCTIONAL(
+            "Functional", 60,
+            "Affects performance or will get worse if used. Capped at 60% of the item's value.",
+        ),
+        MAJOR(
+            "Major", 100,
+            "Unsafe or unusable. The rental stops here and the claim goes to review.",
+        ),
+    }
+
+    /** `Tail · pressure ding` — the one-line form used in a list row. */
+    val headline: String get() = "$area · ${summary.lowercase()}"
+
+    /** The most this severity could ever be awarded against [value]. */
+    fun capOn(value: Int): Int = value * severity.capPercent / 100
 }
 
 data class WalletHold(val amount: Int, val item: String, val releases: String)

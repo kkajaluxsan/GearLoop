@@ -168,7 +168,17 @@ fun FitStamp(
             },
         contentAlignment = Alignment.Center,
     ) {
-        Text(label ?: fit.label, style = GearType.dataS, color = fit.color)
+        // A stamp is one piece of rubber. Squeezed into a column narrower than
+        // its verdict it used to wrap — "PERFECT FIT" came out as "PE / RE" with
+        // the second line clipped by the fixed height — so it refuses to wrap
+        // and pushes the layout instead. Same reasoning as the tag above.
+        Text(
+            text = label ?: fit.label,
+            style = GearType.dataS,
+            color = fit.color,
+            maxLines = 1,
+            softWrap = false,
+        )
     }
 }
 
@@ -228,6 +238,12 @@ fun FairnessMeter(
     rightLabel: String = "YOU GET",
     deltaAmount: Int? = null,
     animate: Boolean = true,
+    /**
+     * The `LKR 19,000 · 31% UNFAIR` line under the beam. Off where the screen
+     * already writes the verdict out in full — S-21 stated the same gap three
+     * times in three colours, two of which disagreed about how bad it was.
+     */
+    showReadout: Boolean = true,
 ) {
     val zone = FairnessZone.of(percent)
     // ±12° at the extremes; 25% out is already at full tilt.
@@ -357,16 +373,18 @@ fun FairnessMeter(
             )
         }
 
-        Spacer8()
-        Text(
-            text = buildString {
-                if (deltaAmount != null) append("${lkr(abs(deltaAmount))} · ")
-                append("${abs(percent)}% ${zone.word}")
-            },
-            style = GearType.dataM,
-            color = zone.ink,
-            textAlign = TextAlign.Center,
-        )
+        if (showReadout) {
+            Spacer8()
+            Text(
+                text = buildString {
+                    if (deltaAmount != null) append("${lkr(abs(deltaAmount))} · ")
+                    append("${abs(percent)}% ${zone.word}")
+                },
+                style = GearType.dataM,
+                color = zone.ink,
+                textAlign = TextAlign.Center,
+            )
+        }
     }
 }
 

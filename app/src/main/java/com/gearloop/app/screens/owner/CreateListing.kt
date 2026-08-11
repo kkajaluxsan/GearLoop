@@ -49,16 +49,35 @@ import com.gearloop.app.ui.theme.Space
 
 private data class Slot(val label: String, val photo: Int?, val quality: String?, val warn: Boolean = false)
 
+/**
+ * A small count as a word, for running prose.
+ *
+ * The angle count is derived from the capture set rather than typed, and a bare
+ * numeral mid-sentence ("7 angles. The same 7 a renter…") reads like a spec
+ * sheet. Numbers a user acts on are set in mono; this one is a sentence.
+ */
+private fun spelled(n: Int): String = when (n) {
+    in 1..10 -> listOf(
+        "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+    )[n - 1]
+    else -> "$n"
+}
+
 @Composable
 fun S25CreateListingPhotos(nav: Nav) {
-    val slots = listOf(
-        Slot("Deck", Demo.torq.photos[0], "Good"),
-        Slot("Bottom", Demo.torq.photos[4], "Good"),
-        Slot("Nose", Demo.torq.photos[1], "Dark — retake?", warn = true),
-        Slot("Tail", null, null),
-        Slot("Rails", null, null),
-        Slot("Fins", null, null),
+    // The angles the *handover* asks for, in the same order and under the same
+    // names. This screen used to list six of its own — "Rails" and "Fins" where
+    // capture wants "Rail L", "Rail R" and "Fin box" — while its own subtitle
+    // promised they were "the same six a renter checks against".
+    val shot = mapOf(
+        "Deck" to (Demo.torq.photos[0] to "Good"),
+        "Bottom" to (Demo.torq.photos[4] to "Good"),
+        "Nose" to (Demo.torq.photos[1] to "Dark — retake?"),
     )
+    val slots = Demo.captureAngles.map { angle ->
+        val taken = shot[angle.label]
+        Slot(angle.label, taken?.first, taken?.second, warn = taken?.second == "Dark — retake?")
+    }
 
     GearScreen(
         appBar = { AppBar(onBack = { nav.back() }) },
@@ -78,8 +97,10 @@ fun S25CreateListingPhotos(nav: Nav) {
         VGap(Space.l)
         Text("Show us the board", style = GearType.headingXl, color = GearText.primary)
         VGap(Space.s)
+        val count = spelled(Demo.captureAngles.size)
         Text(
-            "Six angles. The same six a renter checks against at handover.",
+            "${count.replaceFirstChar { it.uppercase() }} angles. " +
+                "The same $count a renter checks against at handover.",
             style = GearType.bodyM,
             color = GearText.secondary,
         )
@@ -157,11 +178,10 @@ private fun PhotoSlot(slot: Slot, isHero: Boolean, modifier: Modifier = Modifier
                     }
                 }
             } else {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    GearIcon(Lucide.Camera, null, size = IconSize.l, tint = GearColor.Chalk400)
-                    VGap(4.dp)
-                    Text(slot.label.uppercase(), style = GearType.dataS, color = GearText.tertiary)
-                }
+                // Just the affordance. The angle is named in the caption under
+                // every tile, filled or empty, so printing it inside an empty
+                // one as well said the same word twice, 12 dp apart.
+                GearIcon(Lucide.Camera, "Add the ${slot.label} photo", size = IconSize.l, tint = GearColor.Chalk400)
             }
         }
         VGap(5.dp)

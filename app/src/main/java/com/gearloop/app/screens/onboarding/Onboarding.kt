@@ -45,6 +45,14 @@ import com.gearloop.app.ui.theme.GearText
 import com.gearloop.app.ui.theme.GearType
 import com.gearloop.app.ui.theme.Space
 
+/**
+ * How many screens onboarding is, held once.
+ *
+ * S-02 and S-03 each counted to four independently and there is no fourth
+ * screen, so the track never filled and the last step read "3 of 4".
+ */
+private const val ONBOARDING_STEPS = 3
+
 /* ------------------------------------------------------------------ S-01 */
 
 private data class Intent(val icon: LucideIcon, val title: String, val subtitle: String)
@@ -73,9 +81,12 @@ fun S01IntentSelector(nav: Nav) {
             }
         },
     ) {
-        VGap(Space.s)
-        Eyebrow("Getting started")
-        VGap(Space.sm)
+        // Step 1 of the same three, drawn the same way. It used to open on a
+        // bare "GETTING STARTED" eyebrow and then produce a progress track out
+        // of nowhere on the next screen, reading "step 2 of 4" — of four, when
+        // onboarding is three screens long.
+        ProgressStepper(step = 1, total = ONBOARDING_STEPS)
+        VGap(Space.l)
         Text("What brings you here?", style = GearType.displayL, color = GearText.primary)
         VGap(Space.l)
 
@@ -157,7 +168,7 @@ fun S02FitProfile(nav: Nav) {
             }
         },
     ) {
-        ProgressStepper(step = 2, total = 4)
+        ProgressStepper(step = 2, total = ONBOARDING_STEPS)
         VGap(Space.l)
         Text("Let's get your sizes right", style = GearType.displayL, color = GearText.primary)
         VGap(Space.m)
@@ -280,7 +291,7 @@ fun S03SportInterests(nav: Nav) {
             }
         },
     ) {
-        ProgressStepper(step = 3, total = 4)
+        ProgressStepper(step = 3, total = ONBOARDING_STEPS)
         VGap(Space.l)
         Text("Pick your sports", style = GearType.displayL, color = GearText.primary)
         VGap(Space.s)

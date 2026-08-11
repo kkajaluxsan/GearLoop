@@ -13,6 +13,12 @@ object Demo {
 
     // ---------------------------------------------------------------- people
 
+    /**
+     * Kavitha's reviews, 5★ first. Declared before she is, because her rating
+     * and review count are read off it.
+     */
+    val starDistribution = StarDistribution(listOf(34, 2, 0, 0, 0))
+
     /** The renter — the demo user. 174 cm, 68 kg, shoe EU 42. */
     val nirmal = Person(
         name = "Nirmal Ravindran",
@@ -30,17 +36,24 @@ object Demo {
         handle = "@kavitha_s",
         area = "Nallur, Jaffna",
         tier = TrustTier.GOLD,
-        rating = 4.94,
-        reviews = 37,
+        // Both derived from [starDistribution] rather than typed, because S-42
+        // draws the histogram and the average side by side: a hand-written
+        // average that the bars underneath it don't add up to is the kind of
+        // thing an examiner checks with a calculator.
+        rating = starDistribution.average,
+        reviews = starDistribution.total,
         respondsIn = "~40 m",
         listings = 6,
         memberSince = "Jan 2024",
     )
 
-    val dinesh = Person("Dinesh Kumar", "@dinesh_k", "Gurunagar", TrustTier.SILVER, 4.7, 21, "~2 h", 3)
-    val thusara = Person("Thusara Perera", "@thusara_p", "Point Pedro", TrustTier.SILVER, 4.7, 12, "~3 h", 1)
-    val ayesha = Person("Ayesha Fernando", "@ayesha_f", "Casuarina Beach", TrustTier.GOLD, 4.9, 44, "~25 m", 4)
-    val rizwan = Person("Mohamed Rizwan", "@m_rizwan", "Arugam Bay", TrustTier.BRONZE, 4.5, 6, "~5 h", 2)
+    // Join dates vary with how many rentals each has behind them — all four used
+    // to fall back to the same "Mar 2025", which sat under three different
+    // review counts on the requests inbox and read as placeholder data.
+    val dinesh = Person("Dinesh Kumar", "@dinesh_k", "Gurunagar", TrustTier.SILVER, 4.7, 21, "~2 h", 3, "Aug 2024")
+    val thusara = Person("Thusara Perera", "@thusara_p", "Point Pedro", TrustTier.SILVER, 4.7, 12, "~3 h", 1, "Mar 2025")
+    val ayesha = Person("Ayesha Fernando", "@ayesha_f", "Casuarina Beach", TrustTier.GOLD, 4.9, 44, "~25 m", 4, "Feb 2024")
+    val rizwan = Person("Mohamed Rizwan", "@m_rizwan", "Arugam Bay", TrustTier.BRONZE, 4.5, 6, "~5 h", 2, "Jan 2026")
 
     /** Nirmal's fit profile — the two numbers the whole product argument rests on. */
     const val HEIGHT_CM = 174
@@ -322,28 +335,60 @@ object Demo {
     const val BOOKING_DAYS = 3
     const val PICKUP = "Nallur · 09:00"
 
-    /** Design brief §6, S-11. These lines add to exactly LKR 9,240. */
+    /**
+     * Every money line on S-07, S-08 and S-11 comes from here.
+     *
+     * Written as arithmetic rather than as eight typed numbers, because the
+     * listing footer and the checkout total are *different* baskets — the
+     * listing page has no extras on it and no coupon applied yet — and the only
+     * way two different totals both stay right is to compute them from the same
+     * parts. The version of this that was typed out had the footer quoting a
+     * figure no combination of the lines below could produce.
+     */
+    const val RENTAL_BASE = 2_800 * BOOKING_DAYS            // 8,400
+    const val DURATION_DISCOUNT = 840                         // −10 % at 3+ days
+    const val RENTAL_SUBTOTAL = RENTAL_BASE - DURATION_DISCOUNT
+
+    /** The rash guard Kavitha rents alongside the board — the one chosen extra. */
+    const val EXTRA_RASHGUARD = 150 * BOOKING_DAYS          // 450
+
+    const val PROTECTION_PLUS_DAY = 420
+    const val PROTECTION_PLUS = PROTECTION_PLUS_DAY * BOOKING_DAYS
+    const val COUPON = 831
+
+    /** 10 % of the rental and its extras. Never charged on protection. */
+    private fun serviceFeeOn(rentalAndExtras: Int) = rentalAndExtras / 10
+
+    const val SERVICE_FEE = (RENTAL_SUBTOTAL + EXTRA_RASHGUARD) / 10
+
+    /** Design brief §6, S-11. */
     val priceBreakdown = listOf(
-        PriceLine("LKR 2,800 × 3 days", grouped(8_400)),
-        PriceLine("3-day discount", "−840", PriceLine.Kind.DISCOUNT),
-        PriceLine("Leash", "450"),
+        PriceLine("LKR 2,800 × $BOOKING_DAYS days", grouped(RENTAL_BASE)),
+        PriceLine("$BOOKING_DAYS-day discount", signed(-DURATION_DISCOUNT), PriceLine.Kind.DISCOUNT),
+        PriceLine("Rash guard", grouped(EXTRA_RASHGUARD)),
         PriceLine("Delivery", "—", PriceLine.Kind.MUTED),
-        PriceLine("Plus protection", grouped(1_260)),
-        PriceLine("Service fee", "801"),
-        PriceLine("Coupon FIRSTLOOP", "−831", PriceLine.Kind.DISCOUNT),
-        PriceLine("Total", lkr(9_240), PriceLine.Kind.TOTAL),
+        PriceLine("Plus protection", grouped(PROTECTION_PLUS)),
+        PriceLine("Service fee", grouped(SERVICE_FEE)),
+        PriceLine("Coupon FIRSTLOOP", signed(-COUPON), PriceLine.Kind.DISCOUNT),
+        PriceLine("Total", lkr(BOOKING_TOTAL), PriceLine.Kind.TOTAL),
     )
 
-    const val BOOKING_TOTAL = 9_240
+    const val BOOKING_TOTAL =
+        RENTAL_SUBTOTAL + EXTRA_RASHGUARD + PROTECTION_PLUS + SERVICE_FEE - COUPON
+
     const val DEPOSIT_HOLD = 25_000
 
-    /** What the listing footer quotes before extras are chosen. */
-    const val LISTING_FOOTER_TOTAL = 8_910
+    /**
+     * What the listing footer quotes: the same basket without the extra and
+     * without the coupon, since neither has been chosen on that screen yet.
+     */
+    val LISTING_FOOTER_TOTAL =
+        RENTAL_SUBTOTAL + PROTECTION_PLUS + serviceFeeOn(RENTAL_SUBTOTAL)
 
     val datePanelLines = listOf(
-        PriceLine("LKR 2,800 × 3 days", grouped(8_400)),
-        PriceLine("3-day discount", "−840", PriceLine.Kind.DISCOUNT),
-        PriceLine("Subtotal", grouped(7_560), PriceLine.Kind.TOTAL),
+        PriceLine("LKR 2,800 × $BOOKING_DAYS days", grouped(RENTAL_BASE)),
+        PriceLine("$BOOKING_DAYS-day discount", signed(-DURATION_DISCOUNT), PriceLine.Kind.DISCOUNT),
+        PriceLine("Subtotal", grouped(RENTAL_SUBTOTAL), PriceLine.Kind.TOTAL),
     )
 
     val bookingTimeline = listOf(
@@ -473,6 +518,14 @@ object Demo {
 
     const val EARNINGS_MONTH = 47_200
     const val NEXT_PAYOUT = 12_400
+
+    /**
+     * The next payout has to fall *after* the demo's today, which is the 5th to
+     * the 10th of August 2026. It read "Fri 31 Jul" on two screens — a next
+     * payout dated a week into the past, which is the sort of thing that gets
+     * spotted from the back of the room.
+     */
+    const val NEXT_PAYOUT_DATE = "Fri 14 Aug"
     val earningsSpark = listOf(0.32f, 0.41f, 0.28f, 0.55f, 0.49f, 0.71f, 0.63f, 0.88f, 0.79f, 1f)
 
     val needsYouNow = listOf(
@@ -532,10 +585,28 @@ object Demo {
 
     val calendarUnits = listOf("Torq Mod Fish", "NSP Elements SUP", "Trek Marlin #1", "Trek Marlin #2")
 
+    /**
+     * Three requests, three different lengths, three different clocks.
+     *
+     * The first one is the same request S-24 flags as expiring in 3 h, so the
+     * two screens have to agree about it.
+     */
     val requestInbox = listOf(
-        Triple(thusara, nspSup, "12 – 14 Aug"),
-        Triple(rizwan, trekMarlin, "15 – 16 Aug"),
-        Triple(ayesha, kayak, "20 – 24 Aug"),
+        BookingRequest(
+            renter = thusara, item = nspSup, dates = "12 – 14 Aug", days = 3,
+            respondWithin = "3h 12m",
+            completedRentals = 8, onTimeReturns = 100, verified = 5,
+        ),
+        BookingRequest(
+            renter = rizwan, item = trekMarlin, dates = "15 – 16 Aug", days = 2,
+            respondWithin = "9h 40m",
+            completedRentals = 3, onTimeReturns = 67, verified = 3,
+        ),
+        BookingRequest(
+            renter = ayesha, item = kayak, dates = "20 – 24 Aug", days = 5,
+            respondWithin = "1d 04h",
+            completedRentals = 21, onTimeReturns = 100, verified = 6,
+        ),
     )
 
     // ------------------------------------------------------- account & trust
@@ -576,13 +647,27 @@ object Demo {
         VerificationStep("Home address", "Accept delivery and list your own gear", VerificationStep.State.CURRENT),
     )
 
+    /**
+     * The Torq is deliberately *not* here.
+     *
+     * Nirmal took Plus protection on GL-7K3M9, and S-09, S-11 and S-17 all say
+     * in so many words that Plus means nothing is held on his card. A LKR 25,000
+     * hold against that same booking used to sit at the top of this list and
+     * flatly contradicted them. It is now [coveredNotHeld] instead, which turns
+     * a contradiction into the screen that proves the protection did something.
+     */
     val walletHolds = listOf(
-        WalletHold(25_000, "Torq Mod Fish 6'6\" · GL-7K3M9", "Releases 11 Aug"),
         WalletHold(9_000, "Quechua MH500 3P · GL-6B1P2", "Releases 19 Aug"),
+        WalletHold(16_000, "Pelican Argo 100X · GL-4T2W8", "Releases 26 Aug"),
+    )
+
+    /** Bookings with no hold on them, and the reason there isn't one. */
+    val coveredNotHeld = listOf(
+        "${torq.shortTitle} · $BOOKING_REF" to "PLUS PROTECTION",
     )
 
     val walletTxns = listOf(
-        WalletTxn("Booking GL-7K3M9 · Torq Mod Fish", "5 Aug", -9_240),
+        WalletTxn("Booking GL-7K3M9 · Torq Mod Fish", "5 Aug", -BOOKING_TOTAL),
         WalletTxn("Payout · NSP Elements SUP", "31 Jul", 6_400),
         WalletTxn("Deposit released · GL-5X8T1", "24 Jul", 12_000),
         WalletTxn("Booking GL-5X8T1 · Trek Marlin 7", "20 Jul", -5_130),
@@ -611,7 +696,7 @@ object Demo {
         NotificationItem(
             NotificationItem.Kind.PAYOUT,
             "LKR 12,400 is on its way",
-            "Payout for July arrives Fri 31 Jul",
+            "Payout for July arrives $NEXT_PAYOUT_DATE",
             "Mon",
         ),
         NotificationItem(
@@ -686,4 +771,46 @@ object Demo {
 
     const val CLAIM_AMOUNT = 14_000
     const val CLAIM_REF = "CL-3081"
+    const val CLAIM_RESPOND_WITHIN = "4d 06h"
+    const val CLAIM_RESPOND_DAYS = 5
+    const val BOARD_VALUE = 90_000
+
+    /**
+     * There are two marks on this board, and keeping them straight is the whole
+     * point of the handover flow.
+     *
+     * [PICKUP_MARK] is the one Nirmal and Kavitha record together at pickup —
+     * cosmetic, on the record before he touches the water, and therefore never
+     * claimable. [RETURN_MARK] is the one that appears in the return photo and
+     * is not in the pickup photo, which is what S-18b flags and S-34 claims for.
+     *
+     * They used to be the same 3 cm tail ding described two different ways, with
+     * S-15b calling it functional and S-16 calling it cosmetic. Read literally
+     * that said Kavitha was claiming for damage her own pickup record already
+     * showed — which is the exact accusation the evidence flow exists to prevent.
+     */
+    val PICKUP_MARK = DamageMark(
+        area = "Tail",
+        summary = "Heel dent",
+        severity = DamageMark.Severity.COSMETIC,
+        note = "Shallow heel dent near the tail, about 1 cm. Surface only, not through the glass.",
+        recordedAt = "Recorded at pickup",
+    )
+
+    val RETURN_MARK = DamageMark(
+        area = "Tail",
+        summary = "Pressure ding",
+        severity = DamageMark.Severity.FUNCTIONAL,
+        note = "Pressure ding on the tail, about 3 cm. Soft underfoot — it will take water if it is ridden.",
+        recordedAt = "Found on return",
+    )
+
+    /**
+     * The GearLoop Ops adjudicator whose desk S-40 is.
+     *
+     * He is staff, not a marketplace member — no tier, no rating, no listings —
+     * which is why he is a name here rather than a [Person].
+     */
+    const val ADJUDICATOR = "Ruwan Jayasuriya"
+    const val ADJUDICATOR_INITIALS = "RJ"
 }

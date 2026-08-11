@@ -253,7 +253,7 @@ private fun CalendarStateLegend() {
         verticalArrangement = Arrangement.spacedBy(Space.s),
     ) {
         LegendItem("Available") { SwatchBox(GearSurface.card, bordered = true) }
-        LegendItem("Booked") { SwatchBox(GearColor.Pine800) }
+        LegendItem("Booked") { SwatchBox(GearColor.Pine800, underline = GearColor.HiVis500) }
         LegendItem("Blocked") { SwatchBox(GearColor.Chalk200) }
         LegendItem("Buffer — turnaround") {
             val hatchColor = GearColor.Chalk300
@@ -277,14 +277,15 @@ fun S28RequestsInbox(nav: Nav) {
         appBar = { AppBar(title = "Requests", onBack = { nav.back() }) },
     ) {
         VGap(Space.s)
-        SegmentedControl(listOf("Requests (3)", "Upcoming", "Past"), tab) { tab = it }
+        SegmentedControl(
+            listOf("Requests (${Demo.requestInbox.size})", "Upcoming", "Past"),
+            tab,
+        ) { tab = it }
         VGap(Space.m)
 
-        Demo.requestInbox.forEachIndexed { i, (renter, item, dates) ->
+        Demo.requestInbox.forEachIndexed { i, request ->
             RequestCard(
-                renter = renter,
-                item = item,
-                dates = dates,
+                request = request,
                 expanded = expanded == i,
                 onToggle = { expanded = if (expanded == i) -1 else i },
                 onAccept = { nav.to("s27") },
@@ -298,14 +299,14 @@ fun S28RequestsInbox(nav: Nav) {
 
 @Composable
 private fun RequestCard(
-    renter: com.gearloop.app.data.Person,
-    item: com.gearloop.app.data.GearItem,
-    dates: String,
+    request: com.gearloop.app.data.BookingRequest,
     expanded: Boolean,
     onToggle: () -> Unit,
     onAccept: () -> Unit,
     onMessage: () -> Unit,
 ) {
+    val renter = request.renter
+    val item = request.item
     GearCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(Space.cardPadding)) {
             Row(Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onToggle), verticalAlignment = Alignment.CenterVertically) {
@@ -339,11 +340,9 @@ private fun RequestCard(
                 ) {
                     Eyebrow("Trust breakdown")
                     VGap(Space.s)
-                    listOf(
-                        "Completed rentals" to "8",
-                        "On-time returns" to "100%",
-                        "Verification" to "5 / 6",
-                    ).forEach { (label, value) ->
+                    // Per renter. All three cards used to open on the same three
+                    // numbers, directly under three different star ratings.
+                    request.trustBreakdown.forEach { (label, value) ->
                         Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
                             Text(label, style = GearType.bodyS, color = GearText.secondary)
                             Spacer(Modifier.weight(1f))
@@ -366,9 +365,12 @@ private fun RequestCard(
 
             VGap(Space.sm)
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(dates, style = GearType.dataM, color = GearText.primary)
+                Text(request.dates, style = GearType.dataM, color = GearText.primary)
                 Spacer(Modifier.weight(1f))
-                Text(lkr(item.pricePerDay * 3), style = GearType.dataL, color = GearText.primary)
+                // Days × rate, from the request. Every row used to be priced at
+                // three days whatever its dates said — a 15–16 Aug booking came
+                // out at LKR 5,700 for two nights.
+                Text(lkr(request.total), style = GearType.dataL, color = GearText.primary)
             }
 
             VGap(Space.s)
@@ -382,7 +384,11 @@ private fun RequestCard(
             ) {
                 GearIcon(Lucide.Timer, null, size = IconSize.s, tint = GearColor.Warning500)
                 Spacer(Modifier.width(6.dp))
-                Text("Respond within 3h 12m", style = GearType.dataM, color = GearColor.Warning700)
+                Text(
+                    "Respond within ${request.respondWithin}",
+                    style = GearType.dataM,
+                    color = GearColor.Warning700,
+                )
             }
 
             VGap(Space.sm)

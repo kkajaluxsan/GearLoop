@@ -172,7 +172,15 @@ private fun LocationCard(text: String, time: String) {
     }
 }
 
-/** Contact details stay masked until the booking exists. */
+/**
+ * A contact detail that was masked when it was sent.
+ *
+ * The wording matters: this thread is headed CONFIRMED, so "unlock at booking"
+ * read as a promise the screen had already broken. The number stays masked
+ * because it always does — GearLoop routes calls through a masked line, which is
+ * the same thing S-13 says beside its Call button — and the caption now explains
+ * that rather than dangling a condition that has already been met.
+ */
 @Composable
 private fun RedactedCard(text: String) {
     Column(
@@ -187,7 +195,11 @@ private fun RedactedCard(text: String) {
         VGap(4.dp)
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
             GearIcon(Lucide.Lock, null, size = 12.dp, tint = GearText.tertiary)
-            Text("Contact details unlock at booking", style = GearType.bodyS, color = GearText.tertiary)
+            Text(
+                "Numbers stay masked — use Call to reach Kavitha",
+                style = GearType.bodyS,
+                color = GearText.tertiary,
+            )
         }
     }
 }

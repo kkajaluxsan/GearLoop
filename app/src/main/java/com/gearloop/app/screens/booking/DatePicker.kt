@@ -192,7 +192,9 @@ private fun CalendarLegend() {
         }
         LegendItem("Selected") { SwatchBox(GearColor.Pine800) }
         LegendItem("In range") { SwatchBox(GearColor.HiVis200) }
-        LegendItem("Booked") { SwatchBox(GearColor.Pine800) }
+        // Booked and selected are the same fill; the hi-vis bar is the whole
+        // difference, so the swatch carries it too.
+        LegendItem("Booked") { SwatchBox(GearColor.Pine800, underline = GearColor.HiVis500) }
         LegendItem("Buffer") {
             val hatchColor = GearColor.Chalk300
             Box(

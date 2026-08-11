@@ -169,7 +169,14 @@ fun S36GearCloset(nav: Nav) {
                                 maxLines = 2,
                             )
                             VGap(3.dp)
-                            GearTag(item.tagLine, tone = if (listed) TagTone.HI_VIS else TagTone.MUTED)
+                            // Compact, like every other grid card. The full tag
+                            // does not fit half a phone and was ellipsising the
+                            // item code — "BC-1…" — which is the one part of a
+                            // tag that has to be readable to be worth printing.
+                            GearTag(
+                                text = item.tagLineCompact,
+                                tone = if (listed) TagTone.HI_VIS else TagTone.MUTED,
+                            )
                         }
                         if (!listed) {
                             Text(

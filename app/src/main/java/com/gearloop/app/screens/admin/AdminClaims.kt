@@ -39,6 +39,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
+import com.gearloop.app.data.DamageMark
 import com.gearloop.app.data.Demo
 import com.gearloop.app.data.lkr
 import com.gearloop.app.nav.Nav
@@ -165,7 +166,13 @@ private fun DesktopCanvas(modifier: Modifier = Modifier) {
                 Text("SLA 19h 40m", style = GearType.dataM, color = GearColor.Warning700)
             }
             Spacer(Modifier.width(Space.l))
-            Avatar(Demo.ayesha, size = 36.dp)
+            // Whoever is on the desk, not a party to the claim.
+            Column(horizontalAlignment = Alignment.End) {
+                Text(Demo.ADJUDICATOR, style = GearType.labelM, color = GearText.onDark)
+                Text("ADJUDICATOR", style = GearType.labelXs, color = GearColor.Chalk300)
+            }
+            Spacer(Modifier.width(Space.sm))
+            Avatar(Demo.ADJUDICATOR_INITIALS, size = 36.dp)
         }
 
         Row(Modifier.fillMaxWidth().weight(1f)) {
@@ -176,14 +183,21 @@ private fun DesktopCanvas(modifier: Modifier = Modifier) {
     }
 }
 
-private data class QueueRow(val ref: String, val item: String, val severity: String, val age: String, val amount: Int)
+private data class QueueRow(
+    val ref: String,
+    val item: String,
+    val severity: DamageMark.Severity,
+    val age: String,
+    val amount: Int,
+)
 
+/** The claim at the top is the one S-34 is arguing, so it carries its numbers. */
 private val queue = listOf(
-    QueueRow("CL-3081", "Torq Mod Fish 6'6\"", "Functional", "19h", 14_000),
-    QueueRow("CL-3079", "Trek Marlin 7", "Cosmetic", "1d 4h", 3_200),
-    QueueRow("CL-3074", "NSP Elements SUP", "Major", "2d 2h", 41_000),
-    QueueRow("CL-3068", "Quechua MH500 3P", "Cosmetic", "3d 8h", 1_800),
-    QueueRow("CL-3061", "Pelican Argo 100X", "Functional", "4d 1h", 22_500),
+    QueueRow(Demo.CLAIM_REF, Demo.torq.shortTitle, Demo.RETURN_MARK.severity, "19h", Demo.CLAIM_AMOUNT),
+    QueueRow("CL-3079", "Trek Marlin 7", DamageMark.Severity.COSMETIC, "1d 4h", 3_200),
+    QueueRow("CL-3074", "NSP Elements SUP", DamageMark.Severity.MAJOR, "2d 2h", 41_000),
+    QueueRow("CL-3068", "Quechua MH500 3P", DamageMark.Severity.COSMETIC, "3d 8h", 1_800),
+    QueueRow("CL-3061", "Pelican Argo 100X", DamageMark.Severity.FUNCTIONAL, "4d 1h", 22_500),
 )
 
 @Composable
@@ -202,10 +216,14 @@ private fun ClaimQueue(selected: Int, modifier: Modifier = Modifier, onSelect: (
         GearDivider()
         queue.forEachIndexed { i, row ->
             val active = i == selected
+            // Danger/700, not /500: the badge writes the word on a 12 %-alpha
+            // wash of the same colour, and the accent step is the one drawn to
+            // be a shape. MAJOR was the loudest thing in the queue and the
+            // hardest row in it to actually read.
             val severityColor = when (row.severity) {
-                "Major" -> GearColor.Danger500
-                "Functional" -> GearColor.Warning700
-                else -> GearColor.Chalk600
+                DamageMark.Severity.MAJOR -> GearColor.Danger700
+                DamageMark.Severity.FUNCTIONAL -> GearColor.Warning700
+                DamageMark.Severity.COSMETIC -> GearColor.Chalk600
             }
             Column(
                 Modifier
@@ -223,7 +241,7 @@ private fun ClaimQueue(selected: Int, modifier: Modifier = Modifier, onSelect: (
                 Text(row.item, style = GearType.bodyM, color = GearText.body, maxLines = 1)
                 VGap(6.dp)
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    StatusBadge(row.severity, severityColor)
+                    StatusBadge(row.severity.label, severityColor)
                     Spacer(Modifier.weight(1f))
                     Text(lkr(row.amount), style = GearType.dataM, color = GearText.primary)
                 }
@@ -369,28 +387,35 @@ private fun AdjudicationPanel(award: Int, modifier: Modifier = Modifier, onAward
             .padding(Space.l),
     ) {
         Text("Adjudication", style = GearType.headingL, color = GearText.primary)
+        Spacer(Modifier.height(3.dp))
+        Text(
+            "${Demo.ADJUDICATOR} · Trust & safety",
+            style = GearType.bodyS,
+            color = GearText.secondary,
+        )
 
         VGap(Space.m)
         Eyebrow("Rubric")
         VGap(Space.s)
         GearCard(Modifier.fillMaxWidth(), fill = GearColor.Chalk50) {
             Column(Modifier.padding(Space.sm)) {
-                listOf(
-                    "Cosmetic" to "No award. Wear is priced into the rental.",
-                    "Functional" to "Up to 60% of item value, less depreciation.",
-                    "Major" to "Up to 100%, plus lost-booking compensation.",
-                ).forEachIndexed { i, (severity, rule) ->
+                // The rubric the renter is shown on S-15b and S-34, read off the
+                // same enum. The row for the claim in hand is the one lit up, so
+                // the adjudicator's ceiling and the renter's cap are visibly the
+                // same rule rather than two separately typed sentences.
+                DamageMark.Severity.entries.forEach { severity ->
+                    val current = severity == Demo.RETURN_MARK.severity
                     Row(Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
                         Text(
-                            severity,
+                            severity.label,
                             style = GearType.labelM,
-                            color = if (i == 1) GearColor.Warning700 else GearText.tertiary,
+                            color = if (current) GearColor.Warning700 else GearText.tertiary,
                             modifier = Modifier.width(88.dp),
                         )
                         Text(
-                            rule,
+                            severity.rubric,
                             style = GearType.bodyS,
-                            color = if (i == 1) GearText.body else GearText.tertiary,
+                            color = if (current) GearText.body else GearText.tertiary,
                             modifier = Modifier.weight(1f),
                         )
                     }

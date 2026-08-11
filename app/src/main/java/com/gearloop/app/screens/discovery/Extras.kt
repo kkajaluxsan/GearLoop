@@ -74,7 +74,11 @@ fun S29SearchMap(nav: Nav) {
             horizontalArrangement = Arrangement.spacedBy(Space.s),
         ) {
             Box(Modifier.weight(1f)) {
-                SearchBar("Search this area", value = "Surfboards · Jaffna", onClick = { nav.back() })
+                SearchBar(
+                    placeholder = "Search this area",
+                    value = "Gear · ${Demo.nirmal.area}",
+                    onClick = { nav.back() },
+                )
             }
             GearIconButton(Lucide.Pin, "Draw area", { }, size = 52.dp)
         }
@@ -204,12 +208,17 @@ fun S30TripPlanner(nav: Nav) {
             Demo.tripRentLocally.forEach { (item, who) ->
                 Box {
                     ListingCard(item, { nav.to("s07") }, layout = ListingLayout.LIST)
+                    // Bottom-end, not top-end: the row already puts its save
+                    // heart in the top-right corner, and this chip was sitting
+                    // on top of it with the heart showing through underneath.
                     Text(
                         who.uppercase(),
                         style = GearType.labelXs,
                         color = GearColor.Pine900,
+                        maxLines = 1,
+                        softWrap = false,
                         modifier = Modifier
-                            .align(Alignment.TopEnd)
+                            .align(Alignment.BottomEnd)
                             .padding(Space.s)
                             .clip(GearShape.xs)
                             .background(GearColor.HiVis500)
@@ -346,14 +355,17 @@ private fun RecoveryCard(
 @Composable
 fun S42ListingReviews(nav: Nav) {
     var filter by rememberSaveable { mutableIntStateOf(0) }
-    val distribution = listOf(5 to 0.86f, 4 to 0.11f, 3 to 0.03f, 2 to 0f, 1 to 0f)
+    // Counts, not percentages. The bars used to be fractions typed by hand and
+    // the counts beside them were those fractions multiplied back out and
+    // truncated, so 0.86 · 0.11 · 0.03 of 37 reviews printed as 31 + 4 + 1 = 36.
+    val distribution = Demo.starDistribution
 
     GearScreen(
         appBar = { AppBar(title = "Reviews", onBack = { nav.back() }) },
     ) {
         VGap(Space.m)
         Row(verticalAlignment = Alignment.Bottom) {
-            Text("★ ${Demo.kavitha.rating}", style = GearType.dataXl, color = GearText.primary)
+            Text("★ ${Demo.kavitha.ratingText}", style = GearType.dataXl, color = GearText.primary)
             Spacer(Modifier.width(Space.s))
             Text(
                 "${Demo.kavitha.reviews} reviews",
@@ -364,7 +376,7 @@ fun S42ListingReviews(nav: Nav) {
         }
 
         VGap(Space.m)
-        distribution.forEach { (stars, fraction) ->
+        (5 downTo 1).forEach { stars ->
             Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("$stars★", style = GearType.dataM, color = GearText.tertiary, modifier = Modifier.width(32.dp))
                 Box(
@@ -376,7 +388,7 @@ fun S42ListingReviews(nav: Nav) {
                 ) {
                     Box(
                         Modifier
-                            .fillMaxWidth(fraction)
+                            .fillMaxWidth(distribution.fractionAt(stars))
                             .height(6.dp)
                             .clip(GearShape.full)
                             .background(GearColor.Pine800)
@@ -384,7 +396,7 @@ fun S42ListingReviews(nav: Nav) {
                 }
                 Spacer(Modifier.width(Space.s))
                 Text(
-                    "${(fraction * Demo.kavitha.reviews).toInt()}",
+                    "${distribution.at(stars)}",
                     style = GearType.dataS,
                     color = GearText.tertiary,
                     modifier = Modifier.width(24.dp),
@@ -408,7 +420,10 @@ fun S42ListingReviews(nav: Nav) {
         }
 
         VGap(Space.m)
-        (Demo.torqReviews + Demo.torqReviews.take(2)).forEach {
+        // The reviews that exist, once each. The list used to be padded out by
+        // appending the first two again, so Ayesha's five-star review appeared
+        // twice on the same screen, word for word.
+        Demo.torqReviews.forEach {
             ReviewCard(it)
             VGap(Space.sm)
         }

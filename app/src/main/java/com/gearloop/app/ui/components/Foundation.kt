@@ -179,17 +179,37 @@ fun Avatar(
     modifier: Modifier = Modifier,
     size: Dp = 44.dp,
     showTierRing: Boolean = false,
+) = Avatar(
+    initials = person.initials,
+    modifier = modifier,
+    size = size,
+    ringColor = if (showTierRing) person.tier.accent else null,
+)
+
+/**
+ * The same monogram for someone who has no marketplace record.
+ *
+ * GearLoop Ops staff have no trust tier, so the ring is passed in rather than
+ * derived — a tier ring drawn round an adjudicator would claim a standing the
+ * app has no way to know.
+ */
+@Composable
+fun Avatar(
+    initials: String,
+    modifier: Modifier = Modifier,
+    size: Dp = 44.dp,
+    ringColor: Color? = null,
 ) {
     Box(
         modifier
             .size(size)
             .clip(CircleShape)
             .background(GearColor.Pine800)
-            .then(if (showTierRing) Modifier.border(Border.heavy, person.tier.accent, CircleShape) else Modifier),
+            .then(if (ringColor != null) Modifier.border(Border.heavy, ringColor, CircleShape) else Modifier),
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            text = person.initials,
+            text = initials,
             style = if (size >= 36.dp) GearType.dataM else GearType.dataS,
             color = GearText.onDark,
             textAlign = TextAlign.Center,
@@ -332,6 +352,7 @@ private fun AvatarsPreview() = PreviewFrame {
         Avatar(Demo.kavitha, size = 56.dp, showTierRing = true)
         Avatar(Demo.kavitha)
         Avatar(Demo.kavitha, size = 32.dp)
+        Avatar(Demo.ADJUDICATOR_INITIALS, size = 36.dp)
     }
 }
 

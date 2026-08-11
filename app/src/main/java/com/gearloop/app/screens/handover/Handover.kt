@@ -42,6 +42,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gearloop.app.data.CaptureAngle
+import com.gearloop.app.data.DamageMark
 import com.gearloop.app.data.Demo
 import com.gearloop.app.data.lkr
 import com.gearloop.app.nav.Nav
@@ -279,15 +280,6 @@ fun S14ScanHandshake(nav: Nav) {
             }
 
             VGap(Space.l)
-            GearButton(
-                "Enter 6-digit code instead",
-                { nav.to("s15") },
-                Modifier.fillMaxWidth(),
-                type = ButtonType.GHOST,
-                size = ButtonSize.M,
-                contentColor = GearText.onDark,
-            )
-            VGap(Space.s)
             Text(
                 "BOTH SCANS MUST HAPPEN WITHIN 10 MIN",
                 style = GearType.dataS,
@@ -297,6 +289,19 @@ fun S14ScanHandshake(nav: Nav) {
             )
             VGap(Space.m)
             GearButton("Scan", { nav.to("s15") }, Modifier.fillMaxWidth(), icon = Lucide.ScanLine)
+            VGap(Space.s)
+            // Below the primary, and carrying an icon. As a bare ghost button it
+            // was white centred text between two other lines of white centred
+            // text, with nothing about it saying it could be tapped.
+            GearButton(
+                label = "Enter 6-digit code instead",
+                onClick = { nav.to("s15") },
+                modifier = Modifier.fillMaxWidth(),
+                type = ButtonType.GHOST,
+                size = ButtonSize.M,
+                icon = Lucide.Hash,
+                contentColor = GearText.onDark,
+            )
             VGap(Space.l)
         }
     }
@@ -544,7 +549,14 @@ private fun AngleThumb(angle: CaptureAngle) {
 
 @Composable
 fun S15bDamageMarking(nav: Nav) {
-    var severity by rememberSaveable { mutableStateOf(1) }
+    // This is the pickup record, so it opens on the mark that is actually on the
+    // record: cosmetic. It used to default to functional, which put a claimable
+    // 3cm ding on the board *before* Nirmal took it — and then S-34 claimed for
+    // a 3cm ding on the same spot at return, against Kavitha's own evidence.
+    var severity by rememberSaveable {
+        mutableStateOf(Demo.PICKUP_MARK.severity.ordinal)
+    }
+    val severities = DamageMark.Severity.entries
 
     GearScreen(
         appBar = { AppBar(title = "Mark damage", type = AppBarType.MODAL, onBack = { nav.back() }) },
@@ -616,24 +628,22 @@ fun S15bDamageMarking(nav: Nav) {
         Eyebrow("Severity")
         VGap(Space.s)
         SegmentedControl(
-            options = listOf("Cosmetic", "Functional", "Major"),
+            options = severities.map { it.label },
             selectedIndex = severity,
             onSelect = { severity = it },
         )
         VGap(Space.s)
+        // The rubric wording lives on the severity itself, so this screen, the
+        // claim and the adjudicator's console all quote the same sentence.
         Text(
-            when (severity) {
-                0 -> "Marks the surface only. Doesn't affect how it rides, and never triggers a claim on its own."
-                1 -> "Affects performance or will get worse if used. Capped at 60% of the item's value."
-                else -> "Unsafe or unusable. The rental stops here and the claim goes to review."
-            },
+            severities[severity].rubric,
             style = GearType.bodyS,
             color = GearText.secondary,
         )
 
         VGap(Space.l)
         GearTextField(
-            value = "Pressure ding on the tail, about 3 cm. Not through the glass.",
+            value = Demo.PICKUP_MARK.note,
             label = "Note",
             state = FieldState.FILLED,
         )

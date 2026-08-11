@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -32,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.gearloop.app.data.Demo
 import com.gearloop.app.data.lkr
@@ -104,17 +106,10 @@ fun S16SignRelease(nav: Nav) {
         VGap(Space.m)
         Eyebrow("Existing damage recorded")
         VGap(Space.s)
-        GearCard(Modifier.fillMaxWidth()) {
-            Row(Modifier.padding(Space.sm), verticalAlignment = Alignment.CenterVertically) {
-                GearImage(Demo.torqConditionPhotos[0], "Damage", Modifier.size(52.dp), GearShape.sm)
-                Spacer(Modifier.width(Space.sm))
-                Column(Modifier.weight(1f)) {
-                    Text("Tail · pressure ding", style = GearType.labelL, color = GearText.primary)
-                    Text("Cosmetic · recorded at pickup", style = GearType.bodyS, color = GearText.tertiary)
-                }
-                StatusBadge("Cosmetic", GearColor.Warning700)
-            }
-        }
+        // One mark, one source. The severity used to be typed twice in this row
+        // — once in the subtitle and once in the badge — and typed a third time
+        // on S-15b, where it said something different.
+        DamageRow(Demo.PICKUP_MARK, Demo.torqConditionPhotos[0])
 
         VGap(Space.l)
         SignatureBlock(Demo.nirmal, signed = true, alpha = 1f)
@@ -127,6 +122,22 @@ fun S16SignRelease(nav: Nav) {
             kind = BannerKind.SAFETY,
         )
         VGap(Space.section)
+    }
+}
+
+/** A recorded mark, as a list row. The severity is stated once, in the badge. */
+@Composable
+private fun DamageRow(mark: com.gearloop.app.data.DamageMark, photo: Int) {
+    GearCard(Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(Space.sm), verticalAlignment = Alignment.CenterVertically) {
+            GearImage(photo, "${mark.headline} photo", Modifier.size(52.dp), GearShape.sm)
+            Spacer(Modifier.width(Space.sm))
+            Column(Modifier.weight(1f)) {
+                Text(mark.headline, style = GearType.labelL, color = GearText.primary)
+                Text(mark.recordedAt, style = GearType.bodyS, color = GearText.tertiary)
+            }
+            StatusBadge(mark.severity.label, GearColor.Warning700)
+        }
     }
 }
 
@@ -186,13 +197,18 @@ fun S17ActiveRental(nav: Nav) {
     GearScreen(
         tabBar = { MainTabBar(nav, MainTab.RENTALS) },
         contentPadding = 0.dp,
+        // The hero runs pine up behind the status bar, so the clock and the
+        // signal icons have to go light with it — this screen was drawing them
+        // in their dark form on top of a near-black band.
+        darkStatusBar = true,
     ) {
         Column(
             Modifier
                 .fillMaxWidth()
                 .background(GearColor.Pine800)
+                .statusBarsPadding()
                 .padding(horizontal = Space.screen)
-                .padding(top = Space.section + Space.l, bottom = Space.l),
+                .padding(top = Space.l, bottom = Space.l),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 GearImage(Demo.torq.hero, Demo.torq.title, Modifier.size(72.dp), GearShape.sm)
@@ -361,7 +377,7 @@ fun S18ReturnSettlement(nav: Nav) {
 
         Row(Modifier.fillMaxWidth()) {
             Text("AT PICKUP", style = GearType.labelXs, color = GearText.tertiary, modifier = Modifier.weight(1f))
-            Spacer(Modifier.width(54.dp))
+            Spacer(Modifier.width(COMPARISON_GUTTER))
             Text("ON RETURN", style = GearType.labelXs, color = GearText.tertiary, modifier = Modifier.weight(1f))
         }
         VGap(6.dp)
@@ -420,6 +436,15 @@ fun S18ReturnSettlement(nav: Nav) {
     }
 }
 
+/**
+ * The column of angle labels between the two photo strips.
+ *
+ * Wide enough for the widest thing that goes in it, which is the CHANGED badge
+ * and not the label. At 54dp the badge broke to "CHANG / ED" — a word split
+ * across two lines, sitting on top of the label above it.
+ */
+private val COMPARISON_GUTTER = 78.dp
+
 @Composable
 private fun ComparisonRow(label: String, photo: Int, changed: Boolean, onClick: () -> Unit) {
     Row(
@@ -435,16 +460,25 @@ private fun ComparisonRow(label: String, photo: Int, changed: Boolean, onClick: 
     ) {
         GearImage(photo, "$label at pickup", Modifier.weight(1f).height(96.dp), GearShape.sm)
         Column(
-            Modifier.width(54.dp),
+            Modifier.width(COMPARISON_GUTTER).padding(horizontal = 4.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text(label.uppercase(), style = GearType.labelXs, color = GearText.tertiary, textAlign = TextAlign.Center)
+            Text(
+                text = label.uppercase(),
+                style = GearType.labelXs,
+                color = GearText.tertiary,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
             if (changed) {
-                VGap(4.dp)
+                VGap(5.dp)
                 Text(
-                    "CHANGED",
+                    text = "CHANGED",
                     style = GearType.labelXs,
                     color = GearText.onDark,
+                    maxLines = 1,
+                    softWrap = false,
                     modifier = Modifier
                         .clip(GearShape.xs)
                         .background(GearColor.Warning500)
@@ -528,8 +562,8 @@ fun S18bEvidenceDiff(nav: Nav) {
         }
         VGap(Space.m)
         Banner(
-            title = "Difference detected on the tail",
-            text = "A 3 cm mark appears in the return photo that isn't in the pickup photo. " +
+            title = "Difference detected on the ${Demo.RETURN_MARK.area.lowercase()}",
+            text = "${Demo.RETURN_MARK.note} It isn't in the pickup photo. " +
                 "Both photos are geotagged to Nallur and timestamped.",
             kind = BannerKind.WARNING,
         )

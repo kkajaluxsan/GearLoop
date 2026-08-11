@@ -129,7 +129,8 @@ fun S07ListingDetail(nav: Nav) {
                     label = "Your dates",
                     value = "${Demo.BOOKING_DATES} · ${Demo.BOOKING_DAYS} days",
                     onClick = { nav.to("s08") },
-                    supporting = "3-day discount applied · save ${lkr(840)}",
+                    supporting = "${Demo.BOOKING_DAYS}-day discount applied · " +
+                        "save ${lkr(Demo.DURATION_DISCOUNT)}",
                     leadingIcon = Lucide.Calendar,
                 )
 
@@ -239,7 +240,11 @@ fun S07ListingDetail(nav: Nav) {
 
         StickyFooter(
             priceValue = lkr(Demo.LISTING_FOOTER_TOTAL),
-            priceCaption = "${Demo.BOOKING_DAYS} days, all in",
+            // Not "all in": no extras have been picked and no coupon applied on
+            // this screen, so the checkout total is a different — lower —
+            // number. Saying "all in" here and then charging something else is
+            // the exact thing the price breakdown on S-11 exists to avoid.
+            priceCaption = "${Demo.BOOKING_DAYS} days, before extras",
         ) {
             GearButton("Book instantly", { nav.to("s08") }, size = ButtonSize.M, icon = Lucide.Zap)
         }
@@ -280,7 +285,9 @@ private fun HeroCarousel(photos: List<Int>, saved: Boolean, onSave: () -> Unit, 
             Modifier.align(Alignment.BottomStart).padding(start = Space.screen, bottom = 22.dp),
             horizontalArrangement = Arrangement.spacedBy(Space.s),
         ) {
-            Pill("${pager.currentPage + 1} / 9")
+            // The count and the dots have to agree. This said "of 9" beside five
+            // dots, because the number was typed and the dots were counted.
+            Pill("${pager.currentPage + 1} / ${photos.size}")
             Pill(
                 text = "Condition photos",
                 fill = GearSurface.overImage.copy(alpha = 0.92f),
@@ -396,7 +403,7 @@ fun MapThumb(
 @Composable
 private fun ReviewsBlock(nav: Nav) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("★ ${Demo.kavitha.rating}", style = GearType.dataL, color = GearText.primary)
+        Text("★ ${Demo.kavitha.ratingText}", style = GearType.dataL, color = GearText.primary)
         Spacer(Modifier.width(Space.s))
         Text("${Demo.kavitha.reviews} reviews", style = GearType.bodyM, color = GearText.secondary)
     }

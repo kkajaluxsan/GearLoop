@@ -42,6 +42,20 @@ class ContrastTest {
     private fun Color.hex() =
         "#%02X%02X%02X".format((red * 255).toInt(), (green * 255).toInt(), (blue * 255).toInt())
 
+    /**
+     * This colour laid over [under] at [alpha].
+     *
+     * Several chips fill themselves with an accent at low alpha and then write
+     * on it. The thing text has to contrast against there is the blend, not
+     * either colour on its own, so it is worked out rather than approximated
+     * with "near enough white".
+     */
+    private fun Color.over(under: Color, alpha: Float) = Color(
+        red = red * alpha + under.red * (1 - alpha),
+        green = green * alpha + under.green * (1 - alpha),
+        blue = blue * alpha + under.blue * (1 - alpha),
+    )
+
     private class Failure(val label: String, val got: Double, val want: Double, val detail: String)
 
     private val failures = mutableListOf<Failure>()
@@ -151,9 +165,24 @@ class ContrastTest {
             check("$name · fit $verdict on app", colour, p.surfaceApp, TEXT)
         }
 
-        // Trust tiers, drawn as a badge and a ring.
-        listOf("bronze" to p.tierBronze, "silver" to p.tierSilver, "gold" to p.tierGold)
-            .forEach { (tier, colour) -> check("$name · tier $tier on card", colour, p.surfaceCard, SHAPE) }
+        // Trust tiers, in the two jobs they do.
+        //
+        // The metal is a ring round an avatar and the tick inside a badge, so it
+        // is a shape. The ink is the word GOLD written on that badge, so it is
+        // text — and the badge fills itself with the metal at 14 % alpha, which
+        // is the quieter of the two backgrounds it has to clear. Both were drawn
+        // in the metal before this: silver measured 3.3:1 as a label and gold
+        // 2.9:1, and neither was being checked here.
+        listOf(
+            Triple("bronze", p.tierBronze, p.tierBronzeInk),
+            Triple("silver", p.tierSilver, p.tierSilverInk),
+            Triple("gold", p.tierGold, p.tierGoldInk),
+        ).forEach { (tier, metal, ink) ->
+            check("$name · tier $tier ring on card", metal, p.surfaceCard, SHAPE)
+            check("$name · tier $tier label on card", ink, p.surfaceCard, TEXT)
+            check("$name · tier $tier label on app", ink, p.surfaceApp, TEXT)
+            check("$name · tier $tier label on its own tint", ink, metal.over(p.surfaceCard, 0.14f), TEXT)
+        }
 
         // Borders do the work shadows would. WCAG sets no ratio for a separator,
         // and this one is meant to be quiet, so the bar is only "visible at all"
