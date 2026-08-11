@@ -18,3 +18,10 @@ build/
 # committing them would push links that resolve nowhere for anyone else.
 .claude/
 .cursor/
+
+# Raw user-research data — interview audio, screen recordings, survey exports
+# and signed consent forms. These carry identifiable voices and are submitted
+# alongside the report rather than committed. The README explaining the naming
+# convention stays, because the appendix references it.
+docs/ux-research/appendix/raw/*
+!docs/ux-research/appendix/raw/README.md
