@@ -2,8 +2,22 @@ package com.gearloop.app.ui.components
 
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import com.gearloop.app.ui.theme.Border
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.selection.selectable
@@ -34,7 +48,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Text
+import com.gearloop.app.ui.theme.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -74,6 +88,15 @@ import kotlin.math.roundToInt
 
 enum class FieldState { DEFAULT, FOCUS, FILLED, ERROR, DISABLED }
 
+/**
+ * The text field, in two modes — the same pattern as [SearchBar].
+ *
+ * Pass [onValueChange] and it is a real field: it takes focus, shows a caret,
+ * types, and reports what was typed. Leave it out and it is the display form the
+ * prototype used everywhere, which still has a place for read-only values. Both
+ * draw the same box, so a screen that moved from one to the other at Milestone 03
+ * did not change shape.
+ */
 @Composable
 fun GearTextField(
     value: String,
@@ -87,10 +110,18 @@ fun GearTextField(
     leadingIcon: LucideIcon? = null,
     trailingIcon: LucideIcon? = null,
     onClick: (() -> Unit)? = null,
+    onValueChange: ((String) -> Unit)? = null,
+    singleLine: Boolean = true,
+    keyboardType: KeyboardType = KeyboardType.Text,
+    imeAction: ImeAction = ImeAction.Done,
+    onImeAction: (() -> Unit)? = null,
 ) {
+    val editable = onValueChange != null && state != FieldState.DISABLED
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
     val borderColor = when {
         error != null || state == FieldState.ERROR -> GearColor.Danger500
-        state == FieldState.FOCUS -> GearColor.Pine800
+        state == FieldState.FOCUS || (editable && focused) -> GearColor.Pine800
         state == FieldState.DISABLED -> GearColor.Chalk300
         else -> GearSurface.border
     }
@@ -109,23 +140,49 @@ fun GearTextField(
         Row(
             Modifier
                 .fillMaxWidth()
-                .height(52.dp)
+                .then(if (singleLine) Modifier.height(52.dp) else Modifier.heightIn(min = 52.dp))
                 .clip(GearShape.sm)
                 .border(Border.medium, borderColor, GearShape.sm)
                 .background(fill)
-                .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier)
+                .then(if (onClick != null && !editable) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier)
                 .padding(horizontal = Space.m),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalAlignment = if (singleLine) Alignment.CenterVertically else Alignment.Top,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             if (leadingIcon != null) GearIcon(leadingIcon, null, size = IconSize.m, tint = GearColor.Chalk500)
             if (prefix != null) Text(prefix, style = GearType.dataM, color = GearText.tertiary)
-            Text(
-                text = value.ifEmpty { placeholder },
-                style = GearType.bodyM,
-                color = textColor,
-                modifier = Modifier.weight(1f),
-            )
+            if (editable) {
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .padding(vertical = if (singleLine) 0.dp else Space.sm),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    BasicTextField(
+                        value = value,
+                        onValueChange = onValueChange!!,
+                        singleLine = singleLine,
+                        textStyle = GearType.bodyM.copy(color = GearText.primary),
+                        cursorBrush = SolidColor(GearColor.Pine800),
+                        keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = imeAction),
+                        keyboardActions = KeyboardActions(onAny = { onImeAction?.invoke() }),
+                        interactionSource = interaction,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .semantics { contentDescription = label ?: placeholder },
+                    )
+                    if (value.isEmpty()) {
+                        Text(placeholder, style = GearType.bodyM, color = GearText.placeholder)
+                    }
+                }
+            } else {
+                Text(
+                    text = value.ifEmpty { placeholder },
+                    style = GearType.bodyM,
+                    color = textColor,
+                    modifier = Modifier.weight(1f),
+                )
+            }
             if (suffix != null) Text(suffix, style = GearType.dataM, color = GearText.tertiary)
             if (trailingIcon != null) GearIcon(trailingIcon, null, size = IconSize.m, tint = GearColor.Chalk500)
             // A caret, so a focused field reads as focused in a static mock.
@@ -269,35 +326,51 @@ private fun StepperButton(icon: LucideIcon, description: String, onClick: () -> 
     }
 }
 
+/**
+ * A switch. On its own it is its own target, grown to 44 dp tall round the
+ * 32 dp track. Pass a null [onCheckedChange] when something larger carries the
+ * tap (a [ToggleRow], or a row of its own) and it is drawn only, so the switch
+ * is announced once, with the words beside it.
+ */
 @Composable
 fun Toggle(
     checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
+    onCheckedChange: ((Boolean) -> Unit)?,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
 ) {
     val knobOffset = if (checked) 23.dp else 3.dp
     Box(
-        modifier
-            .size(width = 52.dp, height = 32.dp)
-            .clip(GearShape.full)
-            .background(
-                when {
-                    !enabled -> GearColor.Chalk200
-                    checked -> GearColor.Pine800
-                    else -> GearColor.Chalk300
-                }
-            )
-            .toggleable(value = checked, enabled = enabled, role = Role.Switch, onValueChange = onCheckedChange),
+        modifier.then(
+            if (onCheckedChange != null) {
+                Modifier
+                    .heightIn(min = Metrics.tapTarget)
+                    .toggleable(value = checked, enabled = enabled, role = Role.Switch, onValueChange = onCheckedChange)
+            } else Modifier
+        ),
+        contentAlignment = Alignment.Center,
     ) {
         Box(
             Modifier
-                .offset(x = knobOffset)
-                .align(Alignment.CenterStart)
-                .size(26.dp)
-                .clip(CircleShape)
-                .background(GearColor.Chalk000)
-        )
+                .size(width = 52.dp, height = 32.dp)
+                .clip(GearShape.full)
+                .background(
+                    when {
+                        !enabled -> GearColor.Chalk200
+                        checked -> GearColor.Pine800
+                        else -> GearColor.Chalk300
+                    }
+                ),
+        ) {
+            Box(
+                Modifier
+                    .offset(x = knobOffset)
+                    .align(Alignment.CenterStart)
+                    .size(26.dp)
+                    .clip(CircleShape)
+                    .background(GearColor.Chalk000)
+            )
+        }
     }
 }
 
@@ -310,7 +383,15 @@ fun ToggleRow(
     modifier: Modifier = Modifier,
     helper: String? = null,
 ) {
-    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    // The whole row is the switch (D-11). The track alone was a 52 x 32 dp
+    // target with no name, so TalkBack said "switch, on" and never what for.
+    Row(
+        modifier
+            .fillMaxWidth()
+            .heightIn(min = Metrics.tapTarget)
+            .toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Column(Modifier.weight(1f)) {
             Text(title, style = GearType.labelL, color = GearText.primary)
             if (helper != null) {
@@ -319,7 +400,7 @@ fun ToggleRow(
             }
         }
         Spacer(Modifier.width(Space.sm))
-        Toggle(checked, onCheckedChange)
+        Toggle(checked, onCheckedChange = null)
     }
 }
 
@@ -369,6 +450,35 @@ fun CheckRow(
     }
 }
 
+/**
+ * A rating, picked as one of five — S-42's review composer and the owner's review
+ * of a renter on S-24. Each star is a full 44 dp target, and each announces its
+ * own value, so a screen reader hears "4 stars, selected" rather than five
+ * unnamed buttons. Amber, not hi-vis: a rating is neither an action nor safety.
+ */
+@Composable
+fun StarPicker(stars: Int, onPick: (Int) -> Unit, modifier: Modifier = Modifier) {
+    Row(modifier.selectableGroup()) {
+        (1..5).forEach { n ->
+            val on = n <= stars
+            Box(
+                Modifier
+                    .size(Metrics.tapTarget)
+                    .selectable(selected = n == stars, role = Role.RadioButton, onClick = { onPick(n) })
+                    .semantics { contentDescription = if (n == 1) "1 star" else "$n stars" },
+                contentAlignment = Alignment.Center,
+            ) {
+                GearIcon(
+                    Lucide.Star, null,
+                    size = IconSize.l,
+                    tint = if (on) GearColor.Warning500 else GearColor.Chalk300,
+                    filled = on,
+                )
+            }
+        }
+    }
+}
+
 @Composable
 fun GearRadio(selected: Boolean, modifier: Modifier = Modifier) {
     Box(
@@ -395,10 +505,26 @@ fun GearSlider(
     valueLabel: String? = null,
     histogram: List<Float>? = null,
     trackHeight: Dp = 4.dp,
+    label: String? = null,
+    stateText: String? = valueLabel,
 ) {
     val density = LocalDensity.current
     val knob = 28.dp
-    BoxWithConstraints(modifier.fillMaxWidth().height(if (histogram != null) 96.dp else 56.dp)) {
+    // A slider drawn from boxes has no semantics of its own: TalkBack could
+    // neither read the amount nor change it, on the one control S-21 is about
+    // (D-13). It now announces what it sets and the value, and takes
+    // "set progress" like a platform slider.
+    BoxWithConstraints(
+        modifier
+            .fillMaxWidth()
+            .height(if (histogram != null) 96.dp else 56.dp)
+            .clearAndSetSemantics {
+                label?.let { contentDescription = it }
+                stateDescription = stateText ?: "${(value.coerceIn(0f, 1f) * 100).roundToInt()}%"
+                progressBarRangeInfo = ProgressBarRangeInfo(value.coerceIn(0f, 1f), 0f..1f)
+                setProgress { target -> onValueChange(target.coerceIn(0f, 1f)); true }
+            },
+    ) {
         val widthPx = with(density) { maxWidth.toPx() }
         val knobPx = with(density) { knob.toPx() }
         val travel = widthPx - knobPx
@@ -504,6 +630,9 @@ fun GearRangeSlider(
     onRangeChange: (Float, Float) -> Unit,
     modifier: Modifier = Modifier,
     histogram: List<Float>? = null,
+    lowerLabel: String = "Minimum",
+    upperLabel: String = "Maximum",
+    valueText: (Float) -> String = { "${(it * 100).roundToInt()}%" },
 ) {
     val density = LocalDensity.current
     val knob = 28.dp
@@ -563,7 +692,9 @@ fun GearRangeSlider(
                     .height(4.dp)
                     .background(GearColor.Pine800)
             )
-            listOf(lower, upper).forEach { f ->
+            // Each handle is its own adjustable node, the way a platform range
+            // slider is read: "Minimum price, LKR 400" (D-13).
+            listOf(lower, upper).forEachIndexed { i, f ->
                 Box(
                     Modifier
                         .offset { IntOffset((travel * f).roundToInt(), 0) }
@@ -572,6 +703,16 @@ fun GearRangeSlider(
                         .clip(CircleShape)
                         .border(Border.medium, GearColor.Pine800, CircleShape)
                         .background(GearColor.Chalk000)
+                        .semantics {
+                            contentDescription = if (i == 0) lowerLabel else upperLabel
+                            stateDescription = valueText(f)
+                            progressBarRangeInfo = ProgressBarRangeInfo(f, 0f..1f)
+                            setProgress { target ->
+                                if (i == 0) onRangeChange(target.coerceIn(0f, upper - 0.05f), upper)
+                                else onRangeChange(lower, target.coerceIn(lower + 0.05f, 1f))
+                                true
+                            }
+                        }
                 )
             }
         }
@@ -695,6 +836,18 @@ private fun TextFieldStatesPreview() = PreviewFrame {
         error = "That's too little float for 68 kg",
     )
     GearTextField("Locked", label = "Item code", state = FieldState.DISABLED)
+    GearTextField("Nirmal Ravindran", label = "Editable", onValueChange = {})
+    GearTextField(
+        "Shallow heel dent near the tail, about 1 cm.", label = "Note, several lines",
+        onValueChange = {}, singleLine = false,
+    )
+}
+
+@GearPreview
+@Composable
+private fun StarPickerPreview() = PreviewFrame {
+    StarPicker(stars = 4, onPick = {})
+    StarPicker(stars = 0, onPick = {})
 }
 
 @GearPreview

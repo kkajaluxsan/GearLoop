@@ -4,7 +4,7 @@ package com.gearloop.app.data
  * Attribution for the photography.
  *
  * Every image is Creative Commons or public domain, sourced through
- * Openverse and re-cropped and colour-graded for the app. Licences that
+ * Openverse or Wikimedia Commons and re-cropped and colour-graded for the app. Licences that
  * permit derivative works were the only ones used, because the packaging
  * step crops and re-grades every frame.
  *
@@ -27,9 +27,13 @@ val photoCredits: List<PhotoCredit> = listOf(
     PhotoCredit("photo_gear_flatlay", "Camping Equipment", "wetwebwork", "BY-SA", "flickr"),
     PhotoCredit("photo_helmet", "My new bicycle helmet", "firepile", "BY", "flickr"),
     PhotoCredit("photo_kayak", "Kayaks on Kayak Beach", "Laurel Fan", "BY-SA", "flickr"),
+    PhotoCredit("photo_my_bat", "GandM Flare DXM bat-Purist 156g ball", "Marie-Lan Nguyen", "BY", "wikimedia"),
+    PhotoCredit("photo_my_helmet", "Abus, Cyclingworld Europe 2024, Meerbusch (P1180004)", "Matti Blume", "BY-SA", "wikimedia"),
+    PhotoCredit("photo_my_kayak", "Inflatable kayak at Manning River", "JaredMcKenzie", "CC0", "wikimedia"),
     PhotoCredit("photo_nsp_sup", "Sunset .. Vancouver Island heat wave", "Nick Kenrick..", "BY", "flickr"),
     PhotoCredit("photo_quechua_tent", "RMNP Camping Tent", "Dave Dugdale", "BY-SA", "flickr"),
     PhotoCredit("photo_santacruz", "Rocky Mountain Vertex", "Dusty J", "BY", "flickr"),
+    PhotoCredit("photo_sot_kayak", "Orange sit-on-top kayak detail", "23IVAN", "BY-SA", "wikimedia"),
     PhotoCredit("photo_ss_bat", "google cricket bat & ball", "osde8info", "BY-SA", "flickr"),
     PhotoCredit("photo_torq_1", "Finished Board, Deck", "tylerkaraszewski", "BY", "flickr"),
     PhotoCredit("photo_torq_2", "Surfboard fins sand beach sunset", "Unknown", "CC0", "rawpixel"),

@@ -17,16 +17,23 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Text
+import com.gearloop.app.ui.theme.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gearloop.app.data.DayState
-import com.gearloop.app.data.Demo
+import com.gearloop.app.data.dateRange
+import com.gearloop.app.data.monthYear
+import com.gearloop.app.data.repo.DayCell
 import com.gearloop.app.nav.Nav
 import com.gearloop.app.ui.components.*
 import com.gearloop.app.ui.theme.GearColor
@@ -35,36 +42,29 @@ import com.gearloop.app.ui.theme.GearSurface
 import com.gearloop.app.ui.theme.GearText
 import com.gearloop.app.ui.theme.GearType
 import com.gearloop.app.ui.theme.Space
+import com.gearloop.app.ui.vm.MoneyViewModel
+import com.gearloop.app.ui.vm.gearViewModel
+import java.time.YearMonth
 
 /* ------------------------------------------------------------------ S-08 */
 
 /**
- * August 2026 starts on a Saturday, which is what makes Sat 8 – Mon 10 Aug
- * land correctly across every screen that quotes those dates.
+ * S-08 · Read the listing's real availability — other bookings, owner blocks and
+ * the buffer day after each — and Update the draft's dates with each tap.
+ *
+ * The first tap starts a range and the second closes it, if every day between
+ * is free; a booked, blocked or past day ignores the tap. Both calendars, this
+ * one and the owner's on S-27, are drawn by the same rules, so a day cannot be
+ * free here and held there (FR-16, FR-17).
  */
-private const val AUG_FIRST_WEEKDAY = 5 // Monday = 0
-private const val SEP_FIRST_WEEKDAY = 1
-
-private fun augustState(day: Int): DayState = when (day) {
-    in 1..4 -> DayState.DISABLED          // already past
-    5 -> DayState.TODAY
-    8, 10 -> DayState.SELECTED
-    9 -> DayState.IN_RANGE
-    11 -> DayState.BUFFER                 // turnaround after this rental
-    in 14..16 -> DayState.BOOKED
-    17 -> DayState.BUFFER
-    24, 25 -> DayState.BLOCKED
-    else -> DayState.AVAILABLE
-}
-
-private fun septemberState(day: Int): DayState = when (day) {
-    in 4..6 -> DayState.BOOKED
-    7 -> DayState.BUFFER
-    else -> DayState.AVAILABLE
-}
-
 @Composable
 fun S08DatePicker(nav: Nav) {
+    val vm: MoneyViewModel = gearViewModel()
+    val draftState by vm.draft.collectAsStateWithLifecycle()
+    // Opened directly (from the screen index, say): start the draft here.
+    LaunchedEffect(Unit) { if (vm.draft.value == null) vm.ensureDraft() }
+    val draft = draftState
+
     Column(Modifier.fillMaxSize().background(GearColor.Pine900.copy(alpha = 0.45f))) {
         Box(
             Modifier
@@ -87,8 +87,12 @@ fun S08DatePicker(nav: Nav) {
                 Modifier.fillMaxWidth().padding(horizontal = Space.screen, vertical = Space.s),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("Choose your dates", style = GearType.headingL, color = GearText.primary)
-                Spacer(Modifier.weight(1f))
+                Column(Modifier.weight(1f)) {
+                    Text("Choose your dates", style = GearType.headingL, color = GearText.primary)
+                    if (draft != null) {
+                        Text(draft.item.shortTitle, style = GearType.bodyS, color = GearText.tertiary)
+                    }
+                }
                 GearIconButton(
                     com.gearloop.app.ui.icons.Lucide.X, "Close", { nav.back() }, size = 40.dp,
                 )
@@ -101,32 +105,41 @@ fun S08DatePicker(nav: Nav) {
                     .verticalScroll(rememberSavedScrollState())
                     .padding(horizontal = Space.screen),
             ) {
-                VGap(Space.m)
-                MonthGrid("August 2026", AUG_FIRST_WEEKDAY, 31, ::augustState)
-                VGap(Space.l)
-                MonthGrid("September 2026", SEP_FIRST_WEEKDAY, 30, ::septemberState)
+                if (draft != null) {
+                    vm.monthsFor(draft).forEachIndexed { i, (month, cells) ->
+                        VGap(if (i == 0) Space.m else Space.l)
+                        MonthGrid(month, cells, onTap = { vm.tapDay(it) })
+                    }
 
-                VGap(Space.l)
-                CalendarLegend()
+                    VGap(Space.l)
+                    CalendarLegend()
 
-                VGap(Space.l)
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(GearShape.md)
-                        .background(GearColor.Chalk50)
-                        .padding(Space.cardPadding),
-                ) {
-                    Demo.datePanelLines.forEachIndexed { i, line ->
-                        PriceRow(line)
-                        if (i != Demo.datePanelLines.lastIndex) VGap(Space.s)
+                    VGap(Space.l)
+                    val lines = draft.quote.dateLines()
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(GearShape.md)
+                            .background(GearColor.Chalk50)
+                            .padding(Space.cardPadding),
+                    ) {
+                        lines.forEachIndexed { i, line ->
+                            PriceRow(line)
+                            if (i != lines.lastIndex) VGap(Space.s)
+                        }
                     }
                 }
                 VGap(Space.section)
             }
 
             StickyFooter {
-                GearButton("Confirm dates", { nav.to("s09") }, Modifier.fillMaxWidth())
+                GearButton(
+                    if (draft == null) "Confirm dates"
+                    else "Confirm ${dateRange(draft.start, draft.end)} · ${draft.days} ${if (draft.days == 1) "day" else "days"}",
+                    { nav.to("s09") },
+                    Modifier.fillMaxWidth(),
+                    enabled = draft != null,
+                )
             }
         }
     }
@@ -134,13 +147,16 @@ fun S08DatePicker(nav: Nav) {
 
 @Composable
 private fun MonthGrid(
-    label: String,
-    firstWeekday: Int,
-    days: Int,
-    stateFor: (Int) -> DayState,
+    month: YearMonth,
+    cells: List<DayCell>,
+    onTap: (java.time.LocalDate) -> Unit,
 ) {
+    // Monday is column 0. August 2026 starts on a Saturday, which is what puts
+    // Sat 8 – Mon 10 Aug on the second row.
+    val firstWeekday = month.atDay(1).dayOfWeek.value - 1
+    val days = month.lengthOfMonth()
     Column(Modifier.fillMaxWidth()) {
-        Text(label, style = GearType.headingM, color = GearText.primary)
+        Text(monthYear(month), style = GearType.headingM, color = GearText.primary)
         VGap(Space.s)
         Row(Modifier.fillMaxWidth()) {
             listOf("M", "T", "W", "T", "F", "S", "S").forEach {
@@ -155,20 +171,24 @@ private fun MonthGrid(
         }
         VGap(Space.xs)
 
-        val cells = firstWeekday + days
-        val rows = (cells + 6) / 7
+        val total = firstWeekday + days
+        val rows = (total + 6) / 7
         repeat(rows) { r ->
             Row(Modifier.fillMaxWidth()) {
                 repeat(7) { c ->
-                    val index = r * 7 + c
-                    val day = index - firstWeekday + 1
+                    val day = r * 7 + c - firstWeekday + 1
                     Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                         if (day in 1..days) {
+                            val cell = cells[day - 1]
+                            val tappable = cell.state in setOf(DayState.AVAILABLE, DayState.TODAY, DayState.SELECTED, DayState.IN_RANGE)
                             DateRangeCell(
                                 day = day.toString(),
-                                state = stateFor(day),
-                                onClick = { },
+                                state = cell.state,
+                                onClick = if (tappable) ({ onTap(cell.date) }) else null,
                                 size = 42.dp,
+                                modifier = Modifier.semantics {
+                                    contentDescription = "${cell.date.dayOfMonth} ${month.month.name.lowercase().replaceFirstChar { it.uppercase() }}, ${stateWord(cell.state)}"
+                                },
                             )
                         } else {
                             Spacer(Modifier.size(42.dp))
@@ -178,6 +198,18 @@ private fun MonthGrid(
             }
         }
     }
+}
+
+/** What a cell means, said out loud — colour and hatching don't reach a screen reader. */
+private fun stateWord(state: DayState): String = when (state) {
+    DayState.AVAILABLE -> "available"
+    DayState.SELECTED -> "selected"
+    DayState.IN_RANGE -> "in your dates"
+    DayState.BOOKED -> "booked"
+    DayState.BUFFER -> "turnaround day, not bookable"
+    DayState.BLOCKED -> "blocked by the owner"
+    DayState.TODAY -> "today, available"
+    DayState.DISABLED -> "past"
 }
 
 @Composable
@@ -195,6 +227,7 @@ private fun CalendarLegend() {
         // Booked and selected are the same fill; the hi-vis bar is the whole
         // difference, so the swatch carries it too.
         LegendItem("Booked") { SwatchBox(GearColor.Pine800, underline = GearColor.HiVis500) }
+        LegendItem("Blocked") { SwatchBox(GearColor.Chalk200) }
         LegendItem("Buffer") {
             val hatchColor = GearColor.Chalk300
             Box(
@@ -211,8 +244,8 @@ private fun CalendarLegend() {
     }
     VGap(Space.s)
     Text(
-        "Buffer is turnaround time — the owner needs 2 h to rinse and check the board " +
-            "before it goes out again.",
+        "Buffer is turnaround time — the owner needs a day to rinse and check the gear " +
+            "before it goes out again. Tap a first and a last day to choose your dates.",
         style = GearType.bodyS,
         color = GearText.secondary,
     )

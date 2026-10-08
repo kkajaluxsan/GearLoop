@@ -62,6 +62,7 @@ object Routes {
     const val BOARD_SIGNATURE = "board/signature"
     const val BOARD_MAP = "board/map"
     const val CREDITS = "credits"
+    const val PRIVACY = "privacy"
 }
 
 object Catalogue {
@@ -147,11 +148,11 @@ object Catalogue {
 
     fun byRoute(route: String): ScreenSpec? = screens.firstOrNull { it.route == route }
 
-    /** Presentation shell routes — the cover, the boards, the credits. */
+    /** Presentation shell routes — the cover, the boards, the credits, the privacy policy. */
     val shellRoutes = listOf(
         Routes.COVER, Routes.SCREEN_INDEX, Routes.BOARD_FOUNDATIONS,
         Routes.BOARD_COMPONENTS, Routes.BOARD_JOURNEY, Routes.BOARD_SIGNATURE,
-        Routes.BOARD_MAP, Routes.CREDITS,
+        Routes.BOARD_MAP, Routes.CREDITS, Routes.PRIVACY,
     )
 
     /** Every route the app can open, catalogue and shell together. */

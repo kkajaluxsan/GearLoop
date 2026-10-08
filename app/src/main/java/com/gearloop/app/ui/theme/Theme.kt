@@ -133,11 +133,17 @@ val LocalWireframe = staticCompositionLocalOf { false }
  * screen as the structural drawing it came from — no screen, and no component,
  * knows it happened. It overrides [darkTheme]: a wireframe is a drawing on
  * paper, and paper has one colour.
+ *
+ * [blockText] greeks the copy: every string is drawn as a bar from cap height to
+ * baseline instead of as words. It is the other half of the wireframe convention,
+ * and it is kept as a separate flag because the two answer different questions —
+ * one takes the colour out, the other takes the reading out. See [LocalBlockText].
  */
 @Composable
 fun GearLoopTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     wireframe: Boolean = false,
+    blockText: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val palette = when {
@@ -151,6 +157,7 @@ fun GearLoopTheme(
     CompositionLocalProvider(
         LocalPalette provides palette,
         LocalWireframe provides wireframe,
+        LocalBlockText provides blockText,
     ) {
         MaterialTheme(
             colorScheme = schemeFor(palette),

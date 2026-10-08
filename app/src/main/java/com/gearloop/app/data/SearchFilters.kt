@@ -17,9 +17,10 @@ import androidx.compose.runtime.toMutableStateList
  * number typed into the design. One object, shared, is what makes the answer to
  * "does the filter work?" yes.
  *
- * It filters [Demo.allListings] using fields [GearItem] already carries — no new
- * data, no new model. Everything here is UI state hoisted to the point where two
- * screens can both see it; there is still no persistence, no network and no DI.
+ * It filters whatever list it is given using fields [GearItem] already carries.
+ * Everything here is UI state hoisted to the point where two screens can both
+ * see it; since Milestone 03 the app shell also writes it to the database
+ * whenever it changes, so the sheet opens as it was left.
  */
 class SearchFilters(
     fitOnly: Boolean = false,
@@ -92,6 +93,48 @@ class SearchFilters(
             item.pricePerDay <= ceiling &&
             (lengths.isEmpty() || lengths.any { item.sizeLabel.startsWith(it) }) &&
             (grades.isEmpty() || grades.any { it.endsWith(item.grade.letter) })
+    }
+
+    /**
+     * Everything the predicate depends on, as one comparable value — what the app
+     * shell watches to know when to write the sheet's state to the database.
+     */
+    val snapshot: List<Any>
+        get() = listOf(fitOnly, instantOnly, delivery, distanceIndex, priceLower, priceUpper, query, lengths.toList(), grades.toList())
+
+    /** An independent copy, for asking "what if" without touching the live one (S-39). */
+    fun copy(): SearchFilters = SearchFilters(
+        fitOnly, instantOnly, delivery, distanceIndex, priceLower, priceUpper, query, lengths.toList(), grades.toList(),
+    )
+
+    /** The active filters as a phrase, for an alert or a "wanted" post. */
+    fun describe(): String {
+        val parts = buildList {
+            if (query.isNotBlank()) add("\"${query.trim()}\"")
+            if (lengths.isNotEmpty()) add(lengths.joinToString("/"))
+            if (grades.isNotEmpty()) add(grades.joinToString("/"))
+            if (fitOnly) add("fits me")
+            if (instantOnly) add("instant book")
+            if (delivery) add("delivered")
+            if (priceLower > 0f || priceUpper < 1f) add("${lkr(priceAt(priceLower))}–${grouped(priceAt(priceUpper))} a day")
+            add("within $maxDistanceKm km")
+        }
+        return parts.joinToString(" · ").replaceFirstChar { it.uppercase() }
+    }
+
+    /** Put back what the filter sheet held when the app was last open. */
+    fun restoreFrom(saved: com.gearloop.app.data.db.SearchPrefsEntity) {
+        fitOnly = saved.fitOnly
+        instantOnly = saved.instantOnly
+        delivery = saved.delivery
+        distanceIndex = saved.distanceIndex.coerceIn(DISTANCES.indices)
+        priceLower = saved.priceLower
+        priceUpper = saved.priceUpper
+        query = saved.query
+        lengths.clear()
+        lengths.addAll(saved.lengths)
+        grades.clear()
+        grades.addAll(saved.grades)
     }
 
     fun reset() {

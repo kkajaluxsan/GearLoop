@@ -1,33 +1,78 @@
 # GearLoop — Sports Gear Rental & Exchange
 
-A UI/UX prototype built in Jetpack Compose from the `gearloop-brief.md` design
-brief. 42 screens, 26 components, one design system, three walkable flows.
+An installable Android app for renting, lending and swapping sports gear,
+built in Kotlin and Jetpack Compose. It began in Milestone 02 as a 42-screen
+high-fidelity prototype and became a working app in Milestone 03 (IT3060 HCI,
+SLIIT, 2026).
 
-**This is a design deliverable, not an application.** There is no backend, no
-database, no network call and no login. Every screen renders from a fixed
-dataset in `data/Demo.kt`, which is why the Torq Mod Fish costs LKR 2,800 a day
-on all eleven screens it appears on. It runs offline and starts instantly —
-which is what you want when you're demonstrating it in a room.
+**What changed in Milestone 03.** Every screen now reads from and writes to an
+on-device Room (SQLite) database. Bookings, payments, messages, condition
+records, claims, swap proposals, listings and the owner's calendar are real
+rows that survive a restart, and each of the 44 interfaces supports at least
+two create, read, update or delete operations. The dataset in `data/Demo.kt` is
+no longer drawn directly. It seeds the database on first launch, and the
+cover's *Reset the demo* clears and reseeds it, so every usability session
+starts from the same state.
+
+It still runs fully offline, with no network call and no login. One phone
+holds both sides of the market: the renter, Nirmal, and the owner, Kavitha, on
+her console (S-24, S-27, S-28). The owner's half of a two-device handshake is
+simulated. These decisions and their reasons are set out in
+[`docs/milestone-03/`](docs/milestone-03/).
 
 ---
 
-## Opening it
+## Setting it up and running it
 
-1. Android Studio → **Open** → select this `GearLoop` folder.
-2. Wait for the Gradle sync (the wrapper pulls Gradle 8.14.3 the first time).
-3. Run on any emulator or device on **Android 8.0 (API 26)** or newer.
+**You need:** Android Studio (2025.3 or newer) with JDK 17, and an emulator or
+phone on **Android 8.0 (API 26)** or newer.
 
-Built and verified with Android Studio 2025.3.4, AGP 8.13.2, Kotlin 2.2.21,
-compileSdk 36, JVM target 17.
+1. Clone the repository, or unzip the submission, and open the `GearLoop`
+   folder in Android Studio (**File → Open**).
+2. Wait for the Gradle sync. The wrapper downloads Gradle 8.14.3 and the
+   dependencies the first time, so the first sync needs internet access.
+3. Pick a device and press **Run**, or from a terminal:
 
-`assembleRelease` produces a 10 MB APK — half the debug build, after R8 and
-resource shrinking — signed with the debug key so it installs directly.
-`testDebugUnitTest` runs the 51 tests over the search predicate, the fit
-derivation and the contrast of all three palettes.
+```powershell
+.\gradlew installDebug          # build and install the debug app
+.\gradlew assembleRelease       # the optimised APK: app/build/outputs/apk/release/app-release.apk
+```
 
-The app opens on a **cover screen** that is also the demo control panel — the
-three flows, the five presentation boards, and an index of all 42 screens are
-each one tap away, along with a light/dark switch and a "reset the demo" button.
+**Installing the APK without Android Studio:** copy `app-release.apk` to the
+phone and open it (allow *Install unknown apps* for your file manager), or run
+`adb install -r app-release.apk`. If an older GearLoop signed with a different
+key is installed, uninstall it first (`adb uninstall com.gearloop.app`).
+
+Versions are pinned in `gradle/libs.versions.toml`: AGP 8.13.2, Kotlin 2.2.21,
+KSP 2.2.21-2.0.5, Room 2.8.5, Compose BOM 2026.05.01, Navigation 2.9.5,
+compileSdk 36, minSdk 26, JVM target 17.
+
+The release build is signed with the group's upload key when the gitignored
+`keystore.properties` is present, and with the debug key otherwise, so it
+builds and installs from any clone. `assembleRelease` needs network access the
+first time it runs, to fetch `lint-gradle`.
+
+### Running the tests
+
+```powershell
+.\gradlew testDebugUnitTest            # 93 JVM tests: pricing, availability, fit, search, formatting, contrast, dataset, toasts
+.\gradlew connectedDebugAndroidTest    # 68 functional tests (TC-01 to TC-68) on a connected device or emulator
+```
+
+The functional tests drive the real screens the way a user would (tap, type,
+scroll, long-press) and then check the result twice: on screen, and in the
+Room database. Each test reseeds the database first. They are listed with
+their results in [`docs/milestone-03/functional-test-results.md`](docs/milestone-03/functional-test-results.md).
+
+### Using it
+
+The app opens on a **cover screen** that is also the demo control panel. The
+three flows, the five presentation boards and an index of all 44 screens are
+each one tap away, along with a light/dark switch, *Reset the demo*, and two
+**prepared states**: *Mid-rental* (the Torq booked, checked and signed for) and
+*After return, claim open* (claim CL-3081 raised). The prepared states run the
+same repository calls the screens make, so they reach the same data a
+participant would.
 
 **Start a flow and the app narrates itself.** A guide bar appears above the
 screen showing which flow you're in, how far through, and the one sentence that
@@ -38,13 +83,16 @@ which matters when the same demo is given twice in a row.
 To jump straight to a screen (useful when an examiner asks for one by number):
 
 ```
-adb shell am start -n com.gearloop.app/.MainActivity --es screen s21
+adb shell am start -S -n com.gearloop.app/.MainActivity --es screen s21
 ```
+
+The `-S` stops the app first. Without it, a copy that is already open is only
+brought to the front, and the screen you asked for is ignored.
 
 And to draw that screen as a wireframe instead:
 
 ```
-adb shell am start -n com.gearloop.app/.MainActivity --es screen s21 --ez wire true
+adb shell am start -S -n com.gearloop.app/.MainActivity --es screen s21 --ez wire true
 ```
 
 ---
@@ -82,34 +130,45 @@ So GearLoop looks like technical equipment, not a shopping app:
 ```
 app/src/main/java/com/gearloop/app/
 ├── MainActivity.kt          entry point, edge-to-edge, start-route extra
+├── GearLoopApplication.kt   AppContainer: builds the database and repositories once
 ├── nav/
-│   ├── Destinations.kt      the 42-screen catalogue: id, page, tier, flows
-│   └── GearLoopApp.kt       NavHost + transitions (250 ms screens, 300 ms sheets)
+│   ├── Destinations.kt      the 44-screen catalogue: id, page, tier, flows
+│   ├── GearLoopApp.kt       NavHost + transitions (250 ms screens, 300 ms sheets)
 │   ├── DemoState.kt         which flow is running, and the demo reset
-│   ├── GuidedBar.kt         the walkthrough chrome above the app bar
+│   └── GuidedBar.kt         the walkthrough chrome above the app bar
 ├── data/
 │   ├── Model.kt             the shapes behind the screens
-│   ├── Demo.kt              the §5 dataset — one source of truth
-│   ├── FitLogic.kt          live size derivation (S-02 recalculates from this)
+│   ├── Demo.kt              the dataset: the seed, and still one source of truth
+│   ├── FitLogic.kt          fit verdicts derived from the stored profile
+│   ├── Pricing.kt           every quote, fee and deposit rule in one place
+│   ├── Availability.kt      the day rules both calendars draw from (FR-16, FR-17)
 │   ├── SearchFilters.kt     the shared search predicate S-04/05/06 all use
-│   ├── Format.kt            rupee, distance and number formatting
-│   ├── Thumbs.kt            generated full-frame → 600 px thumbnail map
-│   └── PhotoCredits.kt      generated attribution table
+│   ├── Format.kt            rupee, distance, date and countdown formatting
+│   ├── DemoClock.kt         the demo's clock: 5 Aug 2026, 09:14, then real time
+│   ├── db/                  Room: 26 entities, 6 DAOs, type converters, the database
+│   └── repo/                one repository per member area, the seed, prepared states
 ├── ui/
-│   ├── theme/               Palette (light + dark) · Color · Type · Metrics · Theme
+│   ├── vm/                  one ViewModel per member area, plus the factory
+│   ├── feedback/            the toast host, with Undo on every delete
+│   ├── theme/               Palette (light + dark + wire) · Color · Type · Metrics
 │   ├── icons/               Lucide geometry + a stroke-weight-aware renderer
 │   ├── preview/             the multipreview annotations and preview frame
-│   └── components/          the 26-component library, each file with its previews
+│   └── components/          the component library, each file with its previews
 └── screens/
     ├── onboarding/  discovery/  booking/  handover/
     ├── exchange/    owner/      account/  admin/
     └── boards/      cover, screen index, presentation boards
+
+app/src/test/          93 JVM unit tests
+app/src/androidTest/   68 functional tests, one class per member (M1 to M4)
+app/schemas/           the exported Room schema
+docs/milestone-03/     test results, defect log, deviations, usability kit
 ```
 
 Open any file in `ui/components/` in Android Studio and every variant of that
 component renders in the split pane — light, dark, and at 200 % font scale,
 which is where a fixed-height row gives itself away. That pane is how the dark
-palette was reviewed: 26 components side by side rather than 42 screens walked
+palette was reviewed: 26 components side by side rather than 44 screens walked
 twice.
 
 ### The 26 components
@@ -159,10 +218,13 @@ S-18 Settlement`
 
 ## Deliberate decisions worth defending
 
-**Interactive where it earns its keep.** The fit profile, fairness slider,
-waiver scroll gate, calendar states, tab bar and photo carousel all really work.
-Everything else is a designed still — this is a UI prototype, and pretending
-otherwise would be padding.
+**Local persistence rather than a server.** Milestone 03 asked for a working
+app, and the question was what "working" needed. Room on the device gives real
+reads and writes, survives a restart, and keeps every session reproducible,
+because a reset reseeds it. A hosted backend would have added sign-up, network
+failure and shared state between participants, none of which the usability
+tasks measure. The repositories are the seam where one would go: no screen
+talks to the database directly.
 
 **Search and filtering are real.** The home chips, the filter sheet and the
 results list share one model, so the count on the sheet's button is the number
@@ -170,8 +232,9 @@ of results you will actually get, removing a chip re-runs the search, and typing
 in the search bar filters by title, sport or item code. Filter hard enough and
 you reach the empty state by doing so — rather than by tapping a button that
 admits it is a mock-up. The two pieces of logic behind this, the search
-predicate and the fit derivation, have 27 unit tests, because a filter that
-quietly excludes something looks exactly like a filter that works.
+predicate and the fit derivation, have 35 unit tests, because a filter that
+quietly excludes something looks exactly like a filter that works. Since
+Milestone 03 the filters are also saved, so a search survives a restart.
 
 **Both themes are built.** Not by inverting the palette, but by asking what each
 token is *for*: chalk is the surface ramp in light and the ink ramp in dark, and
@@ -180,13 +243,21 @@ safety information should not depend on a setting, and anything sitting on a
 photograph, because the photograph doesn't change either.
 
 **The app can draw its own wireframes.** There is a third palette, and switching
-to it renders all 42 screens as the structural drawings they came from — flat
-greys, photographs as crossed boxes, layout and copy untouched. Not one screen
-and not one of the 26 components needed changing to make it work, which is the
-argument for tokenising colour stated more plainly than any rule could: a colour
-that is never written at a call site can be replaced everywhere at once. The
-wireframes in this repo are generated, not drawn, so they cannot fall out of date
-with the screens the way a separate Figma file would.
+to it renders all 44 screens as the structural drawings they came from — flat
+greys, photographs as crossed boxes, layout untouched. Not one screen and not one
+of the 26 components needed changing to make it work, which is the argument for
+tokenising colour stated more plainly than any rule could: a colour that is never
+written at a call site can be replaced everywhere at once. The wireframes in this
+repo are generated, not drawn, so they cannot fall out of date with the screens
+the way a separate Figma file would.
+
+A second flag greeks the copy with it, drawing every string as a bar from cap
+height to baseline — the wireframe convention, where a reviewer should be reading
+the structure rather than the words. The glyphs still lay out and are simply not
+painted, so every bar sits exactly where its words sat; and each bar takes the ink
+colour those words would have had, which is what keeps one legible on the camera
+viewport and on a hi-vis button without inventing a grey for it. Both sets, and the
+rest of the coursework deliverables, are in [`docs/milestone-02/`](docs/milestone-02/).
 
 **Contrast is measured rather than judged by eye.** A test walks every
 foreground-on-background pair the app actually draws — body copy on all three
@@ -246,7 +317,8 @@ Named here rather than left for someone else to find:
   instanced to fixed weights from the Google Fonts variable sources.
 - **Icons** — [Lucide](https://lucide.dev) (ISC).
 - **Photography** — Creative Commons and public domain, sourced via
-  [Openverse](https://openverse.org). Only licences permitting derivative works
+  [Openverse](https://openverse.org) and [Wikimedia Commons](https://commons.wikimedia.org).
+  Only licences permitting derivative works
   were used, because every frame is re-cropped and colour-graded. Full
   attribution is in the app under **Cover → Image credits**, and in
   `data/PhotoCredits.kt`.

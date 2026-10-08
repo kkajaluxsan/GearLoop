@@ -20,18 +20,29 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.material3.Text
+import com.gearloop.app.ui.theme.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.gearloop.app.data.BookingStatus
 import com.gearloop.app.data.DayState
-import com.gearloop.app.data.Demo
+import com.gearloop.app.data.DemoClock
+import com.gearloop.app.data.countdown
+import com.gearloop.app.data.dateRange
+import com.gearloop.app.data.dayMonth
 import com.gearloop.app.data.lkr
+import com.gearloop.app.data.repo.Booking
+import com.gearloop.app.data.repo.CalendarUnit
 import com.gearloop.app.nav.Nav
 import com.gearloop.app.ui.components.*
 import com.gearloop.app.ui.icons.GearIcon
@@ -43,73 +54,116 @@ import com.gearloop.app.ui.theme.GearSurface
 import com.gearloop.app.ui.theme.GearText
 import com.gearloop.app.ui.theme.GearType
 import com.gearloop.app.ui.theme.Space
+import com.gearloop.app.ui.vm.ExchangeSupplyViewModel
+import com.gearloop.app.ui.vm.gearViewModel
+import java.time.LocalDate
+import java.time.temporal.ChronoUnit
+
 /* ------------------------------------------------------------------ S-27 */
 
+/**
+ * S-27 · Read every unit's fortnight — bookings, requests, blocks and the buffer
+ * after each booking — from the same rules the renter's calendar uses (FR-16,
+ * FR-17); Create a block on a free day and Delete one, in block mode; Update a
+ * booking onto a free unit to clear a conflict.
+ */
 @Composable
 fun S27MasterCalendar(nav: Nav) {
+    val vm: ExchangeSupplyViewModel = gearViewModel()
+    val units by vm.units.collectAsStateWithLifecycle()
+    val conflicts by vm.conflicts.collectAsStateWithLifecycle()
+    // Observed so the timeline redraws when a block or a booking changes.
+    val blocks by vm.blocks.collectAsStateWithLifecycle()
+    val bookings by vm.bookings.collectAsStateWithLifecycle()
     var mode by rememberSaveable { mutableIntStateOf(0) }
+    var startDay by rememberSaveable { mutableLongStateOf(DemoClock.today.toEpochDay()) }
+    var blocking by rememberSaveable { mutableStateOf(false) }
+    val from = LocalDate.ofEpochDay(startDay)
+    val days = if (mode == 0) 14 else 7
+    val to = from.plusDays(days - 1L)
 
     GearScreen(
         appBar = {
             AppBar(
                 title = "Calendar",
+                subtitle = "KAVITHA SELVAM · OWNER",
                 onBack = { nav.back() },
-                actions = { GearIconButton(Lucide.Funnel, "Filter", { }, size = 40.dp) },
+                actions = { GearIconButton(Lucide.Inbox, "Requests", { nav.to("s28") }, size = 44.dp) },
             )
         },
         contentPadding = 0.dp,
     ) {
         Column(Modifier.padding(horizontal = Space.screen)) {
             VGap(Space.s)
-            SegmentedControl(listOf("Month", "Week"), mode) { mode = it }
+            SegmentedControl(listOf("Fortnight", "Week"), mode) { mode = it }
             VGap(Space.sm)
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                GearIconButton(Lucide.ChevronLeft, "Previous", { }, size = 36.dp, iconSize = IconSize.s)
+                GearIconButton(
+                    Lucide.ChevronLeft, "Previous", { startDay -= days },
+                    size = 44.dp, iconSize = IconSize.s,
+                )
                 Text(
-                    "8 – 21 August 2026",
+                    dateRange(from, to) + " ${to.year}",
                     style = GearType.headingS,
                     color = GearText.primary,
                     modifier = Modifier.weight(1f),
                     textAlign = TextAlign.Center,
                 )
-                GearIconButton(Lucide.ChevronRight, "Next", { }, size = 36.dp, iconSize = IconSize.s)
+                GearIconButton(
+                    Lucide.ChevronRight, "Next", { startDay += days },
+                    size = 44.dp, iconSize = IconSize.s,
+                )
             }
         }
 
         VGap(Space.s)
-        UnitTimeline()
+        UnitTimeline(units, from, days, blocking, vm, bookings, blocks)
 
         Column(Modifier.padding(horizontal = Space.screen)) {
             VGap(Space.m)
             CalendarStateLegend()
 
-            VGap(Space.m)
-            AccentCard(GearColor.Danger500, Modifier.fillMaxWidth()) {
-                Text("Booking conflict", style = GearType.headingS, color = GearText.primary)
-                VGap(4.dp)
-                Text(
-                    "Trek Marlin #1 is 6 h overdue — Ayesha's booking starts in 2 h.",
-                    style = GearType.bodyS,
-                    color = GearText.secondary,
-                )
-                VGap(Space.sm)
-                Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                    GearButton("Move to unit #2", { }, type = ButtonType.SECONDARY, size = ButtonSize.S)
-                    GearButton("Message Ayesha", { nav.to("s33") }, type = ButtonType.GHOST, size = ButtonSize.S)
+            conflicts.forEach { c ->
+                VGap(Space.m)
+                val hoursLate = ChronoUnit.HOURS.between(c.late.returnAt, DemoClock.now()).coerceAtLeast(1)
+                val untilNext = ChronoUnit.MILLIS.between(DemoClock.now(), c.next.pickupAt)
+                AccentCard(GearColor.Danger500, Modifier.fillMaxWidth()) {
+                    Text("Booking conflict", style = GearType.headingS, color = GearText.primary)
+                    VGap(4.dp)
+                    Text(
+                        "${c.late.unitLabel} is $hoursLate h overdue — ${c.next.renter.name.substringBefore(' ')}'s booking starts in ${countdown(untilNext)}.",
+                        style = GearType.bodyS,
+                        color = GearText.secondary,
+                    )
+                    VGap(Space.sm)
+                    Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                        if (c.freeUnit != null) {
+                            GearButton(
+                                "Move to unit #${c.freeUnit}", { vm.moveToUnit(c.next.ref, c.freeUnit) },
+                                type = ButtonType.SECONDARY, size = ButtonSize.S,
+                            )
+                        }
+                        GearButton(
+                            "Message ${c.late.renter.name.substringBefore(' ')}",
+                            { vm.openThread(c.late.renter.handle); nav.to("s33") },
+                            type = ButtonType.GHOST, size = ButtonSize.S,
+                        )
+                    }
                 }
             }
+
             VGap(Space.l)
-            Eyebrow("Occupancy this fortnight")
+            Eyebrow("Occupancy this ${if (mode == 0) "fortnight" else "week"}")
             VGap(Space.s)
             GearCard(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(Space.cardPadding)) {
-                    Demo.calendarUnits.forEachIndexed { i, unit ->
-                        val pct = unitOccupancy[i]
+                    units.forEach { u ->
+                        val pct = vm.occupancyFor(u, from)
                         Row(
                             Modifier.fillMaxWidth().padding(vertical = 7.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text(unit, style = GearType.bodyS, color = GearText.primary, modifier = Modifier.width(130.dp))
+                            Text(u.label, style = GearType.bodyS, color = GearText.primary, modifier = Modifier.width(130.dp), maxLines = 1)
                             Box(
                                 Modifier
                                     .weight(1f)
@@ -131,59 +185,37 @@ fun S27MasterCalendar(nav: Nav) {
                     }
                 }
             }
-            VGap(Space.s)
-            Text(
-                "Trek Marlin #2 sits idle because bookings default to unit #1. " +
-                    "Rotating the default would even them out.",
-                style = GearType.bodyS,
-                color = GearText.tertiary,
-            )
 
             VGap(Space.m)
-            GearFab(Lucide.CalendarX, "Block dates", { }, label = "Block dates")
+            if (blocking) {
+                Banner(
+                    text = "Block mode: tap a free day to block it, or a blocked day to free it. Booked days can't be blocked.",
+                    kind = BannerKind.INFO,
+                )
+                VGap(Space.s)
+            }
+            GearFab(
+                if (blocking) Lucide.Check else Lucide.CalendarX,
+                if (blocking) "Done blocking" else "Block dates",
+                { blocking = !blocking },
+                label = if (blocking) "Done" else "Block dates",
+            )
             VGap(Space.section)
         }
     }
 }
 
-/** Occupancy per inventory unit, shown on the timeline and summarised below it. */
-private val unitOccupancy = listOf(72, 58, 91, 34)
-
 /** Rows are inventory units, columns are days. Cells reuse the calendar states. */
 @Composable
-private fun UnitTimeline() {
-    val days = 14
-    val occupancy = unitOccupancy
-
-    fun stateFor(unit: Int, day: Int): DayState = when (unit) {
-        0 -> when (day) {
-            in 0..2 -> DayState.BOOKED
-            3 -> DayState.BUFFER
-            in 7..9 -> DayState.BOOKED
-            10 -> DayState.BUFFER
-            else -> DayState.AVAILABLE
-        }
-        1 -> when (day) {
-            in 4..6 -> DayState.BOOKED
-            7 -> DayState.BUFFER
-            in 11..13 -> DayState.BLOCKED
-            else -> DayState.AVAILABLE
-        }
-        2 -> when (day) {
-            in 0..3 -> DayState.BOOKED
-            4 -> DayState.BOOKED       // the overdue one, bleeding into the next
-            5 -> DayState.BOOKED
-            6 -> DayState.BUFFER
-            else -> DayState.AVAILABLE
-        }
-        else -> when (day) {
-            in 4..5 -> DayState.BLOCKED
-            in 9..11 -> DayState.BOOKED
-            12 -> DayState.BUFFER
-            else -> DayState.AVAILABLE
-        }
-    }
-
+private fun UnitTimeline(
+    units: List<CalendarUnit>,
+    from: LocalDate,
+    days: Int,
+    blocking: Boolean,
+    vm: ExchangeSupplyViewModel,
+    bookings: List<Booking>,
+    blocks: List<com.gearloop.app.data.db.CalendarBlockEntity>,
+) {
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberSavedScrollState())) {
         Column {
             // header row
@@ -191,53 +223,55 @@ private fun UnitTimeline() {
                 Spacer(Modifier.width(Space.screen))
                 Spacer(Modifier.width(120.dp))
                 repeat(days) { d ->
+                    val day = from.plusDays(d.toLong())
                     Text(
-                        "${8 + d}",
+                        "${day.dayOfMonth}",
                         style = GearType.labelXs,
-                        color = GearText.tertiary,
+                        color = if (day == DemoClock.today) GearText.primary else GearText.tertiary,
                         textAlign = TextAlign.Center,
-                        modifier = Modifier.width(26.dp),
+                        modifier = Modifier.width(if (blocking) 44.dp else 26.dp),
                     )
                 }
             }
             VGap(4.dp)
-            Demo.calendarUnits.forEachIndexed { u, unit ->
+            units.forEach { u ->
+                // Computed from the lists passed in, so a new block or booking redraws the
+                // row. An unused "version" parameter did not: Compose skips on unused
+                // parameters, and a blocked day stayed drawn as free (D-16).
+                val cells = vm.cellsFor(u, from, bookings, blocks).take(days)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Spacer(Modifier.width(Space.screen))
                     Text(
-                        unit,
+                        u.label,
                         style = GearType.bodyS,
                         color = GearText.primary,
                         maxLines = 1,
                         modifier = Modifier.width(120.dp),
                     )
-                    repeat(days) { d ->
-                        val conflict = u == 2 && d == 5
+                    cells.forEach { cell ->
                         Box(
                             Modifier
-                                .width(26.dp)
-                                .height(40.dp)
+                                .width(if (blocking) 44.dp else 26.dp)
+                                .height(if (blocking) 44.dp else 40.dp)
                                 .padding(1.dp)
                                 .then(
-                                    if (conflict) Modifier.border(Border.heavy, GearColor.Danger500, GearShape.xs)
-                                    else Modifier
-                                ),
+                                    if (blocking && cell.state in setOf(DayState.AVAILABLE, DayState.BLOCKED)) {
+                                        Modifier.clickable(
+                                            role = Role.Button,
+                                            onClickLabel = if (cell.state == DayState.BLOCKED) "Free this day" else "Block this day",
+                                        ) { vm.toggleBlock(u, cell.date) }
+                                    } else Modifier
+                                )
+                                .semantics { contentDescription = "${u.label}, ${dayMonth(cell.date)}, ${cell.state.name.lowercase().replace('_', ' ')}" },
                             contentAlignment = Alignment.Center,
                         ) {
                             DateRangeCell(
                                 day = "",
-                                state = stateFor(u, d),
+                                state = cell.state,
                                 size = 24.dp,
                             )
                         }
                     }
-                    Spacer(Modifier.width(Space.s))
-                    Text(
-                        "${occupancy[u]}%",
-                        style = GearType.dataS,
-                        color = GearText.secondary,
-                        modifier = Modifier.width(38.dp),
-                    )
                     Spacer(Modifier.width(Space.screen))
                 }
             }
@@ -254,6 +288,7 @@ private fun CalendarStateLegend() {
     ) {
         LegendItem("Available") { SwatchBox(GearSurface.card, bordered = true) }
         LegendItem("Booked") { SwatchBox(GearColor.Pine800, underline = GearColor.HiVis500) }
+        LegendItem("Requested") { SwatchBox(GearColor.HiVis200) }
         LegendItem("Blocked") { SwatchBox(GearColor.Chalk200) }
         LegendItem("Buffer — turnaround") {
             val hatchColor = GearColor.Chalk300
@@ -268,48 +303,115 @@ private fun CalendarStateLegend() {
 
 /* ------------------------------------------------------------------ S-28 */
 
+/**
+ * S-28 · Read the owner's requests — each with the renter's live fit verdict,
+ * trust tier and trust breakdown attached (FR-23) — and their upcoming and past
+ * bookings; Update a request to accepted or declined. The renter is told either
+ * way, and an accepted request appears on S-27 as booked.
+ */
 @Composable
 fun S28RequestsInbox(nav: Nav) {
+    val vm: ExchangeSupplyViewModel = gearViewModel()
+    val requests by vm.requests.collectAsStateWithLifecycle()
+    val upcoming by vm.ownerUpcoming.collectAsStateWithLifecycle()
+    val past by vm.ownerPast.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableIntStateOf(0) }
-    var expanded by rememberSaveable { mutableIntStateOf(0) }
+    var expanded by rememberSaveable { mutableStateOf(requests.firstOrNull()?.ref) }
+    var declining by rememberSaveable { mutableStateOf<String?>(null) }
 
     GearScreen(
-        appBar = { AppBar(title = "Requests", onBack = { nav.back() }) },
+        appBar = { AppBar(title = "Requests", subtitle = "KAVITHA SELVAM · OWNER", onBack = { nav.back() }) },
     ) {
         VGap(Space.s)
         SegmentedControl(
-            listOf("Requests (${Demo.requestInbox.size})", "Upcoming", "Past"),
+            listOf("Requests (${requests.size})", "Upcoming", "Past"),
             tab,
         ) { tab = it }
         VGap(Space.m)
 
-        Demo.requestInbox.forEachIndexed { i, request ->
-            RequestCard(
-                request = request,
-                expanded = expanded == i,
-                onToggle = { expanded = if (expanded == i) -1 else i },
-                onAccept = { nav.to("s27") },
-                onMessage = { nav.to("s33") },
-            )
-            VGap(Space.listGap)
+        when (tab) {
+            0 -> {
+                if (requests.isEmpty()) {
+                    EmptyState(icon = Lucide.Inbox, headline = "No requests waiting", body = "New requests arrive here with the renter's fit and trust already attached.")
+                }
+                requests.forEach { request ->
+                    RequestCard(
+                        request = request,
+                        stats = vm.trustStats(request.renter.handle),
+                        expanded = expanded == request.ref,
+                        onToggle = { expanded = if (expanded == request.ref) null else request.ref },
+                        onAccept = { vm.acceptRequest(request.ref, request.renter.name.substringBefore(' ')) },
+                        onDecline = { declining = request.ref },
+                        onMessage = { vm.openThread(request.renter.handle); nav.to("s33") },
+                    )
+                    VGap(Space.listGap)
+                }
+            }
+            1 -> {
+                if (upcoming.isEmpty()) EmptyState(icon = Lucide.CalendarDays, headline = "Nothing booked yet", body = "Accepted requests and instant bookings appear here.")
+                upcoming.forEach { b ->
+                    BookingCard(
+                        b.item, "${b.dates} · ${b.renter.name}",
+                        if (b.status == BookingStatus.ACTIVE) "Out now" else "Confirmed",
+                        if (b.status == BookingStatus.ACTIVE) GearColor.Warning700 else GearColor.Success500,
+                        "See it on the calendar", { nav.to("s27") }, reference = b.ref,
+                    )
+                    VGap(Space.listGap)
+                }
+            }
+            else -> {
+                if (past.isEmpty()) EmptyState(icon = Lucide.History, headline = "No history yet", body = "Finished, declined and cancelled bookings are kept here.")
+                past.forEach { b ->
+                    BookingCard(
+                        b.item, "${b.dates} · ${b.renter.name}", b.status.label, GearColor.Chalk600,
+                        "Message ${b.renter.name.substringBefore(' ')}",
+                        { vm.openThread(b.renter.handle); nav.to("s33") }, reference = b.ref,
+                    )
+                    VGap(Space.listGap)
+                }
+            }
         }
         VGap(Space.section)
+    }
+
+    declining?.let { ref ->
+        val request = requests.firstOrNull { it.ref == ref }
+        GearDialog(
+            title = "Decline this request?",
+            onDismiss = { declining = null },
+            confirmLabel = "Keep it",
+            onConfirm = { declining = null },
+            destructiveLabel = "Decline request",
+            onDestructive = {
+                declining = null
+                vm.declineRequest(ref, request?.renter?.name?.substringBefore(' ') ?: "The renter")
+            },
+        ) {
+            Text(
+                "${request?.renter?.name ?: "The renter"} is refunded in full and the dates free up straight away.",
+                style = GearType.bodyM,
+                color = GearText.secondary,
+            )
+        }
     }
 }
 
 @Composable
 private fun RequestCard(
-    request: com.gearloop.app.data.BookingRequest,
+    request: Booking,
+    stats: Triple<Int, Int, Int>,
     expanded: Boolean,
     onToggle: () -> Unit,
     onAccept: () -> Unit,
+    onDecline: () -> Unit,
     onMessage: () -> Unit,
 ) {
     val renter = request.renter
     val item = request.item
+    val left = request.respondBy?.let { ChronoUnit.MILLIS.between(DemoClock.now(), it) } ?: 0
     GearCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(Space.cardPadding)) {
-            Row(Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onToggle), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().clickable(role = Role.Button, onClickLabel = "Trust breakdown", onClick = onToggle), verticalAlignment = Alignment.CenterVertically) {
                 Avatar(renter, size = 40.dp, showTierRing = true)
                 Spacer(Modifier.width(Space.s))
                 Column(Modifier.weight(1f)) {
@@ -340,9 +442,12 @@ private fun RequestCard(
                 ) {
                     Eyebrow("Trust breakdown")
                     VGap(Space.s)
-                    // Per renter. All three cards used to open on the same three
-                    // numbers, directly under three different star ratings.
-                    request.trustBreakdown.forEach { (label, value) ->
+                    // Per renter, read from the renter's record.
+                    listOf(
+                        "Completed rentals" to "${stats.first}",
+                        "On-time returns" to "${stats.second}%",
+                        "Verification" to "${stats.third} / 6",
+                    ).forEach { (label, value) ->
                         Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
                             Text(label, style = GearType.bodyS, color = GearText.secondary)
                             Spacer(Modifier.weight(1f))
@@ -357,7 +462,7 @@ private fun RequestCard(
                 GearImage(item.hero, item.title, Modifier.size(48.dp), GearShape.sm)
                 Spacer(Modifier.width(Space.s))
                 Column(Modifier.weight(1f)) {
-                    Text(item.shortTitle, style = GearType.labelL, color = GearText.primary, maxLines = 1)
+                    Text(request.unitLabel, style = GearType.labelL, color = GearText.primary, maxLines = 1)
                     VGap(3.dp)
                     GearTag(item.tagLine)
                 }
@@ -367,10 +472,8 @@ private fun RequestCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(request.dates, style = GearType.dataM, color = GearText.primary)
                 Spacer(Modifier.weight(1f))
-                // Days × rate, from the request. Every row used to be priced at
-                // three days whatever its dates said — a 15–16 Aug booking came
-                // out at LKR 5,700 for two nights.
-                Text(lkr(request.total), style = GearType.dataL, color = GearText.primary)
+                // What the owner earns for exactly these nights.
+                Text(lkr(request.ownerPayout), style = GearType.dataL, color = GearText.primary)
             }
 
             VGap(Space.s)
@@ -385,7 +488,7 @@ private fun RequestCard(
                 GearIcon(Lucide.Timer, null, size = IconSize.s, tint = GearColor.Warning500)
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    "Respond within ${request.respondWithin}",
+                    if (left > 0) "Respond within ${countdown(left)}" else "Reply overdue",
                     style = GearType.dataM,
                     color = GearColor.Warning700,
                 )
@@ -393,7 +496,7 @@ private fun RequestCard(
 
             VGap(Space.sm)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                GearButton("Decline", { }, type = ButtonType.GHOST, size = ButtonSize.S)
+                GearButton("Decline", onDecline, type = ButtonType.GHOST, size = ButtonSize.S)
                 GearButton("Counter", onMessage, type = ButtonType.SECONDARY, size = ButtonSize.S)
                 Spacer(Modifier.weight(1f))
                 GearButton("Accept", onAccept, size = ButtonSize.S)

@@ -21,7 +21,7 @@ import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Text
+import com.gearloop.app.ui.theme.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -41,8 +41,16 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 import com.gearloop.app.data.DamageMark
 import com.gearloop.app.data.Demo
+import com.gearloop.app.data.DemoClock
+import com.gearloop.app.data.countdown
 import com.gearloop.app.data.lkr
+import com.gearloop.app.data.stamp
+import com.gearloop.app.data.repo.Claim
 import com.gearloop.app.nav.Nav
+import com.gearloop.app.ui.vm.MoneyViewModel
+import com.gearloop.app.ui.vm.gearViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import java.time.temporal.ChronoUnit
 import com.gearloop.app.ui.components.*
 import com.gearloop.app.ui.icons.GearIcon
 import com.gearloop.app.ui.icons.IconSize
@@ -127,10 +135,18 @@ fun S40AdminClaims(nav: Nav) {
 private val BOARD_W = 1440.dp
 private val BOARD_H = 1024.dp
 
+/**
+ * S-40 · Read the claims queue — every claim on the platform, undecided first;
+ * Update one with a ruling (award and stated reason), a request for more
+ * evidence, or an escalation. The ruling is refused without a reason (FR-19),
+ * and it is what the renter then reads on S-34.
+ */
 @Composable
 private fun DesktopCanvas(modifier: Modifier = Modifier) {
-    var selectedClaim by rememberSaveable { mutableIntStateOf(0) }
-    var award by rememberSaveable { mutableIntStateOf(9_800) }
+    val vm: MoneyViewModel = gearViewModel()
+    val queue by vm.queue.collectAsStateWithLifecycle()
+    var selectedRef by rememberSaveable { mutableStateOf<String?>(null) }
+    val claim = queue.firstOrNull { it.ref == selectedRef } ?: queue.firstOrNull()
 
     Column(modifier.background(GearColor.Chalk100)) {
         // ---- top bar ------------------------------------------------------
@@ -144,26 +160,36 @@ private fun DesktopCanvas(modifier: Modifier = Modifier) {
         ) {
             GearTag("GEARLOOP · OPS", tone = TagTone.DARK)
             Spacer(Modifier.width(Space.l))
-            Text("Claim ${Demo.CLAIM_REF}", style = GearType.headingM, color = GearText.onDark)
+            Text("Claim ${claim?.ref ?: "—"}", style = GearType.headingM, color = GearText.onDark)
             Spacer(Modifier.width(Space.l))
-            Text(
-                "${Demo.nirmal.name}  vs  ${Demo.kavitha.name}",
-                style = GearType.bodyM,
-                color = GearColor.Chalk300,
-            )
+            if (claim != null) {
+                Text(
+                    "${claim.respondent.name}  vs  ${claim.claimant.name}",
+                    style = GearType.bodyM,
+                    color = GearColor.Chalk300,
+                )
+            }
             Spacer(Modifier.weight(1f))
-            Text(lkr(Demo.CLAIM_AMOUNT), style = GearType.dataL, color = GearText.onDark)
-            Spacer(Modifier.width(Space.l))
-            Row(
-                Modifier
-                    .clip(GearShape.xs)
-                    .background(GearColor.Warning500.copy(alpha = 0.2f))
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                GearIcon(Lucide.Timer, null, size = IconSize.s, tint = GearColor.Warning500)
-                Text("SLA 19h 40m", style = GearType.dataM, color = GearColor.Warning700)
+            if (claim != null) {
+                Text(lkr(claim.amount), style = GearType.dataL, color = GearText.onDark)
+                Spacer(Modifier.width(Space.l))
+                // A 48-hour service level from the moment the claim was raised.
+                val sla = ChronoUnit.MILLIS.between(DemoClock.now(), claim.createdAt.plusHours(48))
+                Row(
+                    Modifier
+                        .clip(GearShape.xs)
+                        .background(GearColor.Warning500.copy(alpha = 0.2f))
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    GearIcon(Lucide.Timer, null, size = IconSize.s, tint = GearColor.Warning500)
+                    Text(
+                        if (claim.decided) "DECIDED" else if (sla > 0) "SLA ${countdown(sla).uppercase()}" else "SLA BREACHED",
+                        style = GearType.dataM,
+                        color = GearColor.Warning700,
+                    )
+                }
             }
             Spacer(Modifier.width(Space.l))
             // Whoever is on the desk, not a party to the claim.
@@ -176,32 +202,27 @@ private fun DesktopCanvas(modifier: Modifier = Modifier) {
         }
 
         Row(Modifier.fillMaxWidth().weight(1f)) {
-            ClaimQueue(selectedClaim, Modifier.width(320.dp).fillMaxHeight()) { selectedClaim = it }
-            EvidenceWorkspace(Modifier.weight(1f).fillMaxHeight())
-            AdjudicationPanel(award, Modifier.width(380.dp).fillMaxHeight()) { award = it }
+            ClaimQueue(queue, claim?.ref, Modifier.width(320.dp).fillMaxHeight()) { selectedRef = it }
+            if (claim != null) {
+                EvidenceWorkspace(claim, vm.evidenceFor(claim), Modifier.weight(1f).fillMaxHeight())
+                AdjudicationPanel(claim, vm, Modifier.width(380.dp).fillMaxHeight())
+            } else {
+                Box(Modifier.weight(1f).fillMaxHeight().padding(Space.l)) {
+                    EmptyState(icon = Lucide.Inbox, headline = "The queue is empty", body = "No claims are waiting.")
+                }
+            }
         }
     }
 }
 
-private data class QueueRow(
-    val ref: String,
-    val item: String,
-    val severity: DamageMark.Severity,
-    val age: String,
-    val amount: Int,
-)
-
-/** The claim at the top is the one S-34 is arguing, so it carries its numbers. */
-private val queue = listOf(
-    QueueRow(Demo.CLAIM_REF, Demo.torq.shortTitle, Demo.RETURN_MARK.severity, "19h", Demo.CLAIM_AMOUNT),
-    QueueRow("CL-3079", "Trek Marlin 7", DamageMark.Severity.COSMETIC, "1d 4h", 3_200),
-    QueueRow("CL-3074", "NSP Elements SUP", DamageMark.Severity.MAJOR, "2d 2h", 41_000),
-    QueueRow("CL-3068", "Quechua MH500 3P", DamageMark.Severity.COSMETIC, "3d 8h", 1_800),
-    QueueRow("CL-3061", "Pelican Argo 100X", DamageMark.Severity.FUNCTIONAL, "4d 1h", 22_500),
-)
+/** How long a claim has been waiting: `19h`, `1d 4h`. */
+private fun ageOf(claim: Claim): String {
+    val hours = ChronoUnit.HOURS.between(claim.createdAt, DemoClock.now()).coerceAtLeast(0)
+    return if (hours < 24) "${hours}h" else "${hours / 24}d ${hours % 24}h"
+}
 
 @Composable
-private fun ClaimQueue(selected: Int, modifier: Modifier = Modifier, onSelect: (Int) -> Unit) {
+private fun ClaimQueue(queue: List<Claim>, selected: String?, modifier: Modifier = Modifier, onSelect: (String) -> Unit) {
     Column(modifier.background(GearSurface.card)) {
         Row(
             Modifier.fillMaxWidth().padding(Space.m),
@@ -209,13 +230,11 @@ private fun ClaimQueue(selected: Int, modifier: Modifier = Modifier, onSelect: (
         ) {
             Text("Queue", style = GearType.headingM, color = GearText.primary)
             Spacer(Modifier.width(Space.s))
-            Text("${queue.size}", style = GearType.dataM, color = GearText.tertiary)
-            Spacer(Modifier.weight(1f))
-            GearIcon(Lucide.Funnel, "Filter", size = IconSize.m, tint = GearColor.Chalk500)
+            Text("${queue.count { !it.decided }} open", style = GearType.dataM, color = GearText.tertiary)
         }
         GearDivider()
-        queue.forEachIndexed { i, row ->
-            val active = i == selected
+        queue.forEach { row ->
+            val active = row.ref == selected
             // Danger/700, not /500: the badge writes the word on a 12 %-alpha
             // wash of the same colour, and the accent step is the one drawn to
             // be a shape. MAJOR was the loudest thing in the queue and the
@@ -229,21 +248,23 @@ private fun ClaimQueue(selected: Int, modifier: Modifier = Modifier, onSelect: (
                 Modifier
                     .fillMaxWidth()
                     .background(if (active) GearColor.HiVis100 else Color.Transparent)
-                    .clickable(role = Role.Button) { onSelect(i) }
+                    .clickable(role = Role.Button) { onSelect(row.ref) }
                     .padding(Space.m),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(row.ref, style = GearType.dataM, color = GearText.primary)
                     Spacer(Modifier.weight(1f))
-                    Text(row.age, style = GearType.dataS, color = GearText.tertiary)
+                    Text(ageOf(row).uppercase(), style = GearType.dataS, color = GearText.tertiary)
                 }
                 VGap(4.dp)
-                Text(row.item, style = GearType.bodyM, color = GearText.body, maxLines = 1)
+                Text(row.listingTitle, style = GearType.bodyM, color = GearText.body, maxLines = 1)
                 VGap(6.dp)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     StatusBadge(row.severity.label, severityColor)
+                    Spacer(Modifier.width(Space.s))
+                    Text(row.status.label, style = GearType.bodyS, color = GearText.tertiary, maxLines = 1)
                     Spacer(Modifier.weight(1f))
-                    Text(lkr(row.amount), style = GearType.dataM, color = GearText.primary)
+                    Text(lkr(row.award ?: row.amount), style = GearType.dataM, color = GearText.primary)
                 }
             }
             GearDivider()
@@ -252,15 +273,14 @@ private fun ClaimQueue(selected: Int, modifier: Modifier = Modifier, onSelect: (
 }
 
 @Composable
-private fun EvidenceWorkspace(modifier: Modifier = Modifier) {
+private fun EvidenceWorkspace(claim: Claim, frames: Pair<Int, Int>, modifier: Modifier = Modifier) {
+    var overlay by rememberSaveable { mutableStateOf(true) }
     Column(modifier.background(GearColor.Chalk100).padding(Space.l)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Evidence", style = GearType.headingL, color = GearText.primary)
+            Text("Evidence · ${claim.area}", style = GearType.headingL, color = GearText.primary)
             Spacer(Modifier.weight(1f))
             Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                Chip("Diff overlay", selected = true, icon = Lucide.Aperture)
-                Chip("Zoom", icon = Lucide.ZoomIn)
-                Chip("Metadata", icon = Lucide.Info)
+                Chip("Diff overlay", selected = overlay, icon = Lucide.Aperture, onClick = { overlay = !overlay })
             }
         }
 
@@ -268,17 +288,27 @@ private fun EvidenceWorkspace(modifier: Modifier = Modifier) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.m)) {
             EvidencePane(
                 label = "AT PICKUP",
-                stamp = "08 AUG 08:57 · 9.7134°N 80.0246°E",
-                photo = Demo.torqConditionPhotos[0],
+                stamp = "9.7134°N 80.0246°E",
+                photo = frames.first,
                 modifier = Modifier.weight(1f),
             )
             EvidencePane(
                 label = "ON RETURN",
-                stamp = "10 AUG 16:41 · 9.7131°N 80.0244°E",
-                photo = Demo.torqConditionPhotos[1],
+                stamp = "9.7131°N 80.0244°E",
+                photo = frames.second,
                 modifier = Modifier.weight(1f),
-                highlight = true,
+                highlight = overlay,
             )
+        }
+        VGap(Space.s)
+        Text(claim.note, style = GearType.bodyM, color = GearText.body)
+        if (claim.renterStatement != null) {
+            VGap(Space.s)
+            Text("Renter: “${claim.renterStatement}”", style = GearType.bodyM, color = GearText.secondary)
+        }
+        if (claim.renterEvidence != null) {
+            VGap(4.dp)
+            Text("Renter's evidence: ${claim.renterEvidence}", style = GearType.bodyS, color = GearText.secondary)
         }
 
         VGap(Space.m)
@@ -299,7 +329,8 @@ private fun EvidenceWorkspace(modifier: Modifier = Modifier) {
         Eyebrow("All seven angles")
         VGap(Space.s)
         Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-            Demo.returnComparison.forEach { (label, photo, changed) ->
+            Demo.returnComparison.forEach { (label, photo, _) ->
+                val changed = label == claim.area
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Box(
                         Modifier
@@ -379,7 +410,13 @@ private fun IntegrityCheck(label: String, ok: Boolean) {
 }
 
 @Composable
-private fun AdjudicationPanel(award: Int, modifier: Modifier = Modifier, onAward: (Int) -> Unit) {
+private fun AdjudicationPanel(claim: Claim, vm: MoneyViewModel, modifier: Modifier = Modifier) {
+    // The award can never exceed what was claimed, or the cap the severity sets.
+    val ceiling = minOf(claim.amount, claim.cap)
+    // Keyed on the claim, so moving to another claim starts its own draft ruling.
+    var award by rememberSaveable(claim.ref) { mutableIntStateOf(claim.award ?: (ceiling * 7 / 10) / 100 * 100) }
+    var rationale by rememberSaveable(claim.ref) { mutableStateOf(claim.rationale.orEmpty()) }
+    val median = (ceiling * 67 / 100) / 100 * 100
     Column(
         modifier
             .background(GearSurface.card)
@@ -404,7 +441,7 @@ private fun AdjudicationPanel(award: Int, modifier: Modifier = Modifier, onAward
                 // the adjudicator's ceiling and the renter's cap are visibly the
                 // same rule rather than two separately typed sentences.
                 DamageMark.Severity.entries.forEach { severity ->
-                    val current = severity == Demo.RETURN_MARK.severity
+                    val current = severity == claim.severity
                     Row(Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
                         Text(
                             severity.label,
@@ -437,14 +474,13 @@ private fun AdjudicationPanel(award: Int, modifier: Modifier = Modifier, onAward
             GearIcon(Lucide.History, null, size = IconSize.m, tint = GearColor.Marine700)
             Spacer(Modifier.width(Space.s))
             Column(Modifier.weight(1f)) {
-                Text("4 similar rulings", style = GearType.labelL, color = GearColor.Marine700)
+                Text("Similar rulings", style = GearType.labelL, color = GearColor.Marine700)
                 Text(
-                    "Tail dings, Grade B softtops. Median award ${lkr(9_400)}.",
+                    "${claim.severity.label} damage, Grade B gear. Median award ${lkr(median)}.",
                     style = GearType.bodyS,
                     color = GearColor.Marine700,
                 )
             }
-            GearIcon(Lucide.ChevronRight, null, size = IconSize.s, tint = GearColor.Marine700)
         }
 
         VGap(Space.m)
@@ -453,41 +489,83 @@ private fun AdjudicationPanel(award: Int, modifier: Modifier = Modifier, onAward
         Row(verticalAlignment = Alignment.Bottom) {
             Text(lkr(award), style = GearType.dataXl, color = GearText.primary)
             Spacer(Modifier.weight(1f))
-            Text("of ${lkr(Demo.CLAIM_AMOUNT)} claimed", style = GearType.bodyS, color = GearText.tertiary)
+            Text("of ${lkr(claim.amount)} claimed", style = GearType.bodyS, color = GearText.tertiary)
         }
+
+        if (claim.decided) {
+            VGap(Space.s)
+            Text("RULED ${claim.decidedAt?.let(::stamp)?.uppercase() ?: ""}", style = GearType.dataS, color = GearText.tertiary)
+            VGap(Space.m)
+            Eyebrow("Rationale")
+            VGap(Space.s)
+            Text(claim.rationale.orEmpty(), style = GearType.bodyM, color = GearText.body)
+            VGap(Space.s)
+            Text("Shown to both parties with the ruling.", style = GearType.bodyS, color = GearText.tertiary)
+        } else {
+            RulingControls(claim, vm, ceiling, median, award, { award = it }, rationale, { rationale = it })
+        }
+    }
+}
+
+@Composable
+private fun RulingControls(
+    claim: Claim,
+    vm: MoneyViewModel,
+    ceiling: Int,
+    median: Int,
+    award: Int,
+    onAward: (Int) -> Unit,
+    rationale: String,
+    onRationale: (String) -> Unit,
+) {
+    Column {
         VGap(Space.s)
         GearSlider(
-            value = award / 14_000f,
-            onValueChange = { onAward((it * 14_000).toInt() / 100 * 100) },
+            value = if (ceiling == 0) 0f else award / ceiling.toFloat(),
+            onValueChange = { onAward((it * ceiling).toInt() / 100 * 100) },
+            label = "Award",
+            stateText = lkr(award),
         )
         VGap(Space.s)
         Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-            Chip("Nil", onClick = { onAward(0) })
-            Chip("Median", onClick = { onAward(9_400) })
-            Chip("Full", onClick = { onAward(14_000) })
+            Chip("Nil", selected = award == 0, onClick = { onAward(0) })
+            Chip("Median", selected = award == median, onClick = { onAward(median) })
+            Chip("Full", selected = award == ceiling, onClick = { onAward(ceiling) })
         }
 
         VGap(Space.m)
         Eyebrow("Rationale — required")
         VGap(Space.s)
         GearTextField(
-            value = "Ding is post-pickup and functional but not through the glass. " +
-                "Repair quote accepted at LKR 9,800; depreciation applied for a 3-year-old softtop.",
-            state = FieldState.FILLED,
+            value = rationale,
+            placeholder = "Why this award: what the evidence shows, and the rule applied",
+            onValueChange = onRationale,
+            singleLine = false,
         )
         VGap(6.dp)
         Text(
-            "The rationale is shown to both parties and stored with the ruling.",
+            if (rationale.isBlank()) "A ruling can't be issued without a reason. It's shown to both parties."
+            else "The rationale is shown to both parties and stored with the ruling.",
             style = GearType.bodyS,
-            color = GearText.tertiary,
+            color = if (rationale.isBlank()) GearColor.Warning700 else GearText.tertiary,
         )
 
         VGap(Space.l)
-        GearButton("Issue ruling", { }, Modifier.fillMaxWidth())
+        GearButton(
+            "Issue ruling", { vm.issueRuling(claim.ref, award, rationale) }, Modifier.fillMaxWidth(),
+            enabled = rationale.trim().length >= 10,
+        )
         VGap(Space.s)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-            GearButton("Request more evidence", { }, Modifier.weight(1f), type = ButtonType.SECONDARY, size = ButtonSize.M)
-            GearButton("Escalate", { }, type = ButtonType.GHOST, size = ButtonSize.M)
+            GearButton(
+                "Request more evidence", { vm.requestMoreEvidence(claim.ref) }, Modifier.weight(1f),
+                type = ButtonType.SECONDARY, size = ButtonSize.M,
+                enabled = claim.status != com.gearloop.app.data.ClaimStatus.MORE_EVIDENCE,
+            )
+            GearButton(
+                "Escalate", { vm.escalate(claim.ref) }, type = ButtonType.GHOST, size = ButtonSize.M,
+                enabled = claim.status != com.gearloop.app.data.ClaimStatus.ESCALATED,
+            )
         }
     }
 }

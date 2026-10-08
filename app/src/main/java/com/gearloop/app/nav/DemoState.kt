@@ -37,6 +37,12 @@ class DemoState(
     var generation by mutableIntStateOf(generation)
         private set
 
+    /**
+     * Where the next remount should open, when it is not a flow step — a prepared
+     * scenario lands on the screen it set up rather than back on the cover.
+     */
+    var landing by mutableStateOf<String?>(null)
+
     val flow: Flow? get() = activeFlowId?.let { Catalogue.flowById(it) }
 
     val currentStep: FlowStep? get() = flow?.steps?.getOrNull(step)

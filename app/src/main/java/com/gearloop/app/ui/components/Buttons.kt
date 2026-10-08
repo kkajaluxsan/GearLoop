@@ -29,7 +29,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Text
+import com.gearloop.app.ui.theme.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -82,14 +82,18 @@ private fun skinFor(type: ButtonType, pressed: Boolean, enabled: Boolean): Butto
         // Text on hi-vis is always pine/900. Never white.
         content = GearText.onHiVis,
     )
+    // Label and outline are ink, not pine/800. Pine/800 is a surface step in the
+    // dark palette, so a secondary button drew its label at 1.66:1 on chalk/000
+    // there - found in internal testing (QA-08). Ink is the token whose job is
+    // "readable on whatever surface the theme provides", in all three palettes.
     type == ButtonType.SECONDARY -> ButtonSkin(
         fill = if (pressed) GearColor.Chalk50 else GearColor.Chalk000,
-        content = GearColor.Pine800,
-        border = GearColor.Pine800,
+        content = GearText.primary,
+        border = GearText.primary,
     )
     type == ButtonType.GHOST -> ButtonSkin(
         fill = if (pressed) GearColor.Chalk200 else Color.Transparent,
-        content = GearColor.Pine800,
+        content = GearText.primary,
     )
     else -> ButtonSkin(
         fill = if (pressed) GearColor.Danger600 else GearColor.Danger500,
@@ -211,7 +215,11 @@ fun GearIconButton(
     val content = tint ?: when (tone) {
         IconButtonTone.DARK -> GearText.onDark
         IconButtonTone.HI_VIS -> GearText.onHiVis
-        else -> GearColor.Pine800
+        // The over-image chip is constant across themes, so its glyph is too.
+        IconButtonTone.ON_IMAGE -> GearColor.Pine800
+        // On the card the glyph follows the theme like text does - this is the
+        // back arrow on every app bar, which was pine/800 on a dark card (QA-08).
+        IconButtonTone.ON_LIGHT -> GearText.primary
     }
 
     Box(modifier.size(size), contentAlignment = Alignment.Center) {
@@ -359,11 +367,15 @@ fun GearLink(
     icon: LucideIcon? = null,
     style: androidx.compose.ui.text.TextStyle = GearType.labelM,
 ) {
+    // At least a fingertip tall. The link used to be its text plus 6 dp, about
+    // 30 dp in all, which the 44 dp rule every other control keeps does not
+    // allow (D-04, found while adding the Milestone 03 actions that use it).
     Row(
         modifier
+            .heightIn(min = Metrics.tapTarget)
             .clip(GearShape.sm)
             .clickable(role = Role.Button, onClick = onClick)
-            .padding(vertical = 6.dp, horizontal = 2.dp),
+            .padding(horizontal = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {

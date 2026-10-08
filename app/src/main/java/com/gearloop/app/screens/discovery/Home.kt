@@ -24,7 +24,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.material3.Text
+import com.gearloop.app.ui.theme.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,6 +39,12 @@ import com.gearloop.app.data.Fit
 import com.gearloop.app.data.GearItem
 import com.gearloop.app.data.lkr
 import com.gearloop.app.nav.Nav
+import com.gearloop.app.ui.vm.FitDiscoveryViewModel
+import com.gearloop.app.ui.vm.gearViewModel
+import com.gearloop.app.ui.theme.Metrics
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gearloop.app.screens.MainTab
 import com.gearloop.app.screens.MainTabBar
 import com.gearloop.app.ui.components.*
@@ -54,12 +60,22 @@ import com.gearloop.app.ui.theme.Space
 
 /* ------------------------------------------------------------------ S-04 */
 
+/**
+ * S-04 · Read the rails, the profile and the unread count; Update a listing's
+ * saved state from any card's heart.
+ */
 @Composable
 fun S04Home(nav: Nav) {
+    val vm: FitDiscoveryViewModel = gearViewModel()
+    val rails by vm.rails.collectAsStateWithLifecycle()
+    val profile by vm.profile.collectAsStateWithLifecycle()
+    val unread by vm.unread.collectAsStateWithLifecycle()
+    val matches by vm.matches.collectAsStateWithLifecycle()
     val filters = LocalSearchFilters.current
     // The home chips write to the same model the sheet and the results use, so
     // "Instant book" means one thing in the app rather than three.
     var activeFilter by rememberSaveable { mutableStateOf<String?>(null) }
+    val open: (GearItem) -> Unit = { vm.select(it); nav.to("s07") }
 
     fun applyHomeChip(label: String?) {
         activeFilter = label
@@ -68,8 +84,26 @@ fun S04Home(nav: Nav) {
         filters.priceUpper = if (label == "Under LKR 2,000") 0.34f else 1f
     }
 
+    // A chip is lit only while its filter is really on. The three above live in
+    // the shared model, so clearing one on S-05 or S-06 puts its chip out here.
+    fun isOn(label: String) = activeFilter == label && when (label) {
+        "Instant book" -> filters.instantOnly
+        "Fits me" -> filters.fitOnly
+        "Under LKR 2,000" -> filters.priceUpper < 1f
+        else -> true
+    }
+
+    // "Available today" and "Swap" have no field in the shared filter: they
+    // narrow these rails only. Both used to light up and change nothing (D-21).
+    val swappable = matches.map { it.offer.get.id }.toSet()
+    fun homeOnly(items: List<GearItem>): List<GearItem> = when {
+        isOn("Available today") -> items.filter { it.available }
+        isOn("Swap") -> items.filter { it.id in swappable }
+        else -> items
+    }
+
     GearScreen(
-        appBar = { HomeAppBar(nav) },
+        appBar = { HomeAppBar(nav, profile?.person?.area?.substringAfterLast(", ") ?: "Jaffna", unread) },
         tabBar = { MainTabBar(nav, MainTab.EXPLORE) },
         contentPadding = 0.dp,
     ) {
@@ -91,8 +125,8 @@ fun S04Home(nav: Nav) {
             items(Demo.homeFilters, key = { it }) { label ->
                 Chip(
                     label = label,
-                    selected = activeFilter == label,
-                    onClick = { applyHomeChip(if (activeFilter == label) null else label) },
+                    selected = isOn(label),
+                    onClick = { applyHomeChip(if (isOn(label)) null else label) },
                     icon = if (label == "Instant book") Lucide.Zap else null,
                 )
             }
@@ -101,37 +135,57 @@ fun S04Home(nav: Nav) {
         VGap(Space.l)
         Rail(
             eyebrow = "This weekend near you",
-            items = filters.apply(Demo.weekendNearYou),
-            nav = nav,
+            items = homeOnly(filters.apply(rails["weekend"].orEmpty())),
+            onOpen = open,
+            onSave = vm::toggleSaved,
             onSeeAll = { nav.to("s05") },
         )
 
         VGap(Space.l)
         Rail(
             eyebrow = "Fits you",
-            items = filters.apply(Demo.fitsYou),
-            nav = nav,
+            // Ranked by the live verdict, so changing the profile on S-02 reorders
+            // this rail — and anything now the wrong size drops out of it.
+            items = homeOnly(filters.apply(rails["fits"].orEmpty()))
+                .filter { it.fit in setOf(Fit.PERFECT, Fit.GOOD, Fit.WORKABLE) }
+                .sortedBy { it.fit.ordinal },
+            onOpen = open,
+            onSave = vm::toggleSaved,
             onSeeAll = { nav.to("s05") },
-            leading = { FitStamp(Fit.PERFECT, label = "174 CM · 68 KG") },
+            leading = {
+                val p = profile
+                if (p?.heightCm != null && p.weightKg != null) {
+                    FitStamp(Fit.PERFECT, label = "${p.heightCm} CM · ${p.weightKg} KG")
+                } else {
+                    FitStamp(Fit.UNKNOWN)
+                }
+            },
         )
 
         VGap(Space.l)
-        // This is how swap gets discovered from the rental side of the app.
-        Box(Modifier.padding(horizontal = Space.screen)) {
-            Banner(
-                title = "3 people want to swap for your Burton Custom",
-                text = "Two of them are within 5 km. One is a three-way trade.",
-                kind = BannerKind.INFO,
-                action = "View matches",
-                onAction = { nav.to("s19") },
-            )
+        // This is how swap gets discovered from the rental side of the app. The
+        // count is the live one, so hiding a match on S-19 changes it here.
+        val people = matches.map { it.offer.counterparty.handle }.distinct().size
+        if (people > 0) {
+            Box(Modifier.padding(horizontal = Space.screen)) {
+                Banner(
+                    title = if (people == 1) "1 person wants to swap for your Burton Custom"
+                    else "$people people want to swap for your Burton Custom",
+                    text = if (matches.any { it.offer.threeWay }) "One of the trades is a three-way loop."
+                    else "Each one is a straight two-way trade.",
+                    kind = BannerKind.INFO,
+                    action = "View matches",
+                    onAction = { nav.to("s19") },
+                )
+            }
         }
 
         VGap(Space.l)
         Rail(
             eyebrow = "New in surfing",
-            items = filters.apply(Demo.newInSurfing),
-            nav = nav,
+            items = homeOnly(filters.apply(rails["surf"].orEmpty())),
+            onOpen = open,
+            onSave = vm::toggleSaved,
             onSeeAll = { nav.to("s05") },
         )
 
@@ -144,7 +198,7 @@ fun S04Home(nav: Nav) {
 }
 
 @Composable
-private fun HomeAppBar(nav: Nav) {
+private fun HomeAppBar(nav: Nav, area: String, unread: Int) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -164,16 +218,16 @@ private fun HomeAppBar(nav: Nav) {
         ) {
             GearIcon(Lucide.MapPin, null, size = IconSize.s, tint = GearColor.Pine800)
             Spacer(Modifier.width(6.dp))
-            Text("Jaffna", style = GearType.labelM, color = GearText.primary)
+            Text(area, style = GearType.labelM, color = GearText.primary)
             Spacer(Modifier.width(2.dp))
             GearIcon(Lucide.ChevronDown, null, size = IconSize.s, tint = GearColor.Chalk500)
         }
         Spacer(Modifier.weight(1f))
         GearIconButton(
             icon = Lucide.Bell,
-            contentDescription = "Notifications",
+            contentDescription = if (unread > 0) "Notifications, $unread unread" else "Notifications",
             onClick = { nav.to("s38") },
-            badge = "2",
+            badge = if (unread > 0) "$unread" else null,
         )
     }
 }
@@ -182,7 +236,8 @@ private fun HomeAppBar(nav: Nav) {
 private fun Rail(
     eyebrow: String,
     items: List<GearItem>,
-    nav: Nav,
+    onOpen: (GearItem) -> Unit,
+    onSave: (GearItem) -> Unit,
     onSeeAll: () -> Unit,
     leading: (@Composable () -> Unit)? = null,
 ) {
@@ -213,7 +268,12 @@ private fun Rail(
                 horizontalArrangement = Arrangement.spacedBy(Space.sm),
             ) {
                 items(items, key = { it.id }) { item ->
-                    ListingCard(item, onClick = { nav.to("s07") }, layout = ListingLayout.GRID)
+                    ListingCard(
+                        item,
+                        onClick = { onOpen(item) },
+                        layout = ListingLayout.GRID,
+                        onToggleSave = { onSave(item) },
+                    )
                 }
             }
         }
@@ -251,10 +311,28 @@ private fun TripPlannerPromo(onClick: () -> Unit) {
 
 /* ------------------------------------------------------------------ S-05 */
 
+/** How the results are ordered — the "Best match" control, which now works. */
+private val sortModes = listOf("Best match", "Lowest price", "Nearest")
+
+/**
+ * S-05 · Read the published listings through the shared filter; Update a
+ * listing's saved state from its heart.
+ */
 @Composable
 fun S05SearchResults(nav: Nav) {
+    val vm: FitDiscoveryViewModel = gearViewModel()
+    val all by vm.searchable.collectAsStateWithLifecycle()
+    val profile by vm.profile.collectAsStateWithLifecycle()
     val filters = LocalSearchFilters.current
-    val results = filters.apply(Demo.allListings)
+    var sort by rememberSaveable { mutableIntStateOf(0) }
+    val filtered = filters.apply(all)
+    val results = when (sort) {
+        1 -> filtered.sortedBy { it.pricePerDay }
+        2 -> filtered.sortedBy { it.distanceKm }
+        // Best match: free today first, then the closest fit, then distance.
+        else -> filtered.sortedWith(compareBy({ !it.available }, { it.fit.ordinal }, { it.distanceKm }))
+    }
+    val open: (GearItem) -> Unit = { vm.select(it); nav.to("s07") }
 
     // Lazy: every result carries a photograph, so composing the whole list up
     // front would decode all of them before the first one is on screen.
@@ -264,7 +342,7 @@ fun S05SearchResults(nav: Nav) {
                 // The list is every listing in Jaffna, filtered — a bike, a
                 // tent and a cricket bat among them. Heading it "Surfboards"
                 // described a result set the screen has never shown.
-                title = "Gear in ${Demo.nirmal.area}",
+                title = "Gear in ${profile?.person?.area ?: Demo.nirmal.area}",
                 onBack = { nav.back() },
                 actions = {
                     GearIconButton(Lucide.Map, "Map view", { nav.to("s29") }, size = 40.dp)
@@ -296,12 +374,19 @@ fun S05SearchResults(nav: Nav) {
                         color = GearText.primary,
                     )
                     Spacer(Modifier.weight(1f))
+                    // Was a `clickable {}` that did nothing and had no role. Each
+                    // tap now moves to the next ordering.
                     Row(
-                        Modifier.clickable { }.padding(4.dp),
+                        Modifier
+                            .heightIn(min = Metrics.tapTarget)
+                            .clickable(role = Role.Button, onClickLabel = "Change the order") {
+                                sort = (sort + 1) % sortModes.size
+                            }
+                            .padding(horizontal = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("Best match", style = GearType.labelM, color = GearText.primary)
-                        GearIcon(Lucide.ChevronDown, null, size = IconSize.s, tint = GearColor.Chalk500)
+                        Text(sortModes[sort], style = GearType.labelM, color = GearText.primary)
+                        GearIcon(Lucide.ArrowUpDown, null, size = IconSize.s, tint = GearColor.Chalk500)
                     }
                 }
                 // The chips are the filters, not a picture of them: removing one
@@ -324,11 +409,12 @@ fun S05SearchResults(nav: Nav) {
         itemsIndexed(results, key = { _, item -> item.id }) { i, item ->
             Column(Modifier.padding(horizontal = Space.screen)) {
                 // Every fourth position gets the wide variant, to break the rhythm.
-                if (i > 0 && i % 4 == 3) {
-                    ListingCard(item, { nav.to("s07") }, layout = ListingLayout.WIDE)
-                } else {
-                    ListingCard(item, { nav.to("s07") }, layout = ListingLayout.LIST)
-                }
+                ListingCard(
+                    item,
+                    { open(item) },
+                    layout = if (i > 0 && i % 4 == 3) ListingLayout.WIDE else ListingLayout.LIST,
+                    onToggleSave = { vm.toggleSaved(item) },
+                )
                 VGap(Space.listGap)
             }
         }
@@ -342,7 +428,7 @@ fun S05SearchResults(nav: Nav) {
                         icon = Lucide.Search,
                         headline = "Nothing matches all of that",
                         body = "Loosen one filter and there is gear here. " +
-                            "${Demo.allListings.size} items are listed in total.",
+                            "${all.size} items are listed in total.",
                         actionLabel = "Loosen the tightest filter",
                         onAction = filters::loosen,
                         secondaryLabel = "Clear all filters",

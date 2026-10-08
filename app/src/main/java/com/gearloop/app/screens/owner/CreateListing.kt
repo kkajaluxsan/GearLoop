@@ -7,6 +7,7 @@ import com.gearloop.app.ui.theme.Border
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,9 +19,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.material3.Text
+import com.gearloop.app.ui.theme.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -30,11 +33,21 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.Role
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.selection.toggleable
+import com.gearloop.app.ui.theme.Metrics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gearloop.app.data.Demo
+import com.gearloop.app.data.GearItem
+import com.gearloop.app.data.ListingStatus
 import com.gearloop.app.data.grouped
 import com.gearloop.app.data.lkr
+import com.gearloop.app.data.repo.Seed
 import com.gearloop.app.nav.Nav
 import com.gearloop.app.ui.components.*
 import com.gearloop.app.ui.icons.GearIcon
@@ -45,16 +58,21 @@ import com.gearloop.app.ui.theme.GearShape
 import com.gearloop.app.ui.theme.GearText
 import com.gearloop.app.ui.theme.GearType
 import com.gearloop.app.ui.theme.Space
+import com.gearloop.app.ui.vm.ExchangeSupplyViewModel
+import com.gearloop.app.ui.vm.gearViewModel
+
+/** Opened straight from the screen index, the listing flow starts a draft for Kavitha. */
+@Composable
+private fun rememberListing(vm: ExchangeSupplyViewModel): GearItem? {
+    val draft by vm.draftListing.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { if (vm.draftListing.value == null) vm.startListing(Seed.OWNER) {} }
+    return draft
+}
+
 /* ------------------------------------------------------------------ S-25 */
 
-private data class Slot(val label: String, val photo: Int?, val quality: String?, val warn: Boolean = false)
-
 /**
- * A small count as a word, for running prose.
- *
- * The angle count is derived from the capture set rather than typed, and a bare
- * numeral mid-sentence ("7 angles. The same 7 a renter…") reads like a spec
- * sheet. Numbers a user acts on are set in mono; this one is a sentence.
+ * A small count as a word, for running prose — "seven angles", not "7 angles".
  */
 private fun spelled(n: Int): String = when (n) {
     in 1..10 -> listOf(
@@ -63,53 +81,96 @@ private fun spelled(n: Int): String = when (n) {
     else -> "$n"
 }
 
+/**
+ * S-25 · Read the listing being made or edited; Create a photo in a slot; Update
+ * its title and size; Delete a photo; save the draft. The slots are the angles
+ * the handover checks, in the same order and under the same names.
+ */
 @Composable
 fun S25CreateListingPhotos(nav: Nav) {
-    // The angles the *handover* asks for, in the same order and under the same
-    // names. This screen used to list six of its own — "Rails" and "Fins" where
-    // capture wants "Rail L", "Rail R" and "Fin box" — while its own subtitle
-    // promised they were "the same six a renter checks against".
-    val shot = mapOf(
-        "Deck" to (Demo.torq.photos[0] to "Good"),
-        "Bottom" to (Demo.torq.photos[4] to "Good"),
-        "Nose" to (Demo.torq.photos[1] to "Dark — retake?"),
-    )
-    val slots = Demo.captureAngles.map { angle ->
-        val taken = shot[angle.label]
-        Slot(angle.label, taken?.first, taken?.second, warn = taken?.second == "Dark — retake?")
+    val vm: ExchangeSupplyViewModel = gearViewModel()
+    val item = rememberListing(vm)
+    var editingSlot by rememberSaveable { mutableIntStateOf(-1) }
+    // The title and size are edited as text and written once the field is left
+    // behind — on Continue or Save — rather than on every key.
+    var title by rememberSaveable(item?.id) { mutableStateOf(item?.title ?: "") }
+    var size by rememberSaveable(item?.id) { mutableStateOf(item?.sizeLabel?.takeIf { it != "—" } ?: "") }
+    val angles = Demo.captureAngles.map { it.label }
+
+    if (item == null) {
+        GearScreen(appBar = { AppBar(onBack = { nav.back() }) }) {}
+        return
     }
+    // One write for both fields: two separate edits raced, and the second put
+    // the old title back (D-15).
+    val commit = {
+        val newTitle = title.takeIf { it.isNotBlank() } ?: item.title
+        val newSize = size.takeIf { it.isNotBlank() } ?: item.sizeLabel
+        if (newTitle != item.title || newSize != item.sizeLabel) vm.setDetails(newTitle, newSize)
+    }
+    val draft = item.status == ListingStatus.DRAFT
+    val photoCount = item.photos.size.coerceAtMost(angles.size)
 
     GearScreen(
-        appBar = { AppBar(onBack = { nav.back() }) },
+        appBar = {
+            AppBar(
+                title = if (draft) "New listing" else "Edit listing",
+                subtitle = if (item.owner.handle == Seed.ME) "YOUR CLOSET" else "KAVITHA SELVAM · OWNER",
+                onBack = { commit(); nav.back() },
+            )
+        },
         footer = {
             StickyFooter {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.s)) {
                     GearButton(
-                        "Save draft", { }, Modifier.weight(1f),
+                        "Save draft", { commit(); vm.saveDraft() }, Modifier.weight(1f),
                         type = ButtonType.GHOST, size = ButtonSize.M,
+                        enabled = draft,
                     )
-                    GearButton("Continue", { nav.to("s26") }, Modifier.weight(1.4f), size = ButtonSize.M)
+                    GearButton(
+                        "Continue", { commit(); nav.to("s26") }, Modifier.weight(1.4f), size = ButtonSize.M,
+                        enabled = photoCount > 0 && title.trim().length >= 3,
+                    )
                 }
             }
         },
     ) {
         ProgressStepper(step = 2, total = 8)
         VGap(Space.l)
-        Text("Show us the board", style = GearType.headingXl, color = GearText.primary)
+        Text(
+            "Show us the ${if (item.sport == "Surfing") "board" else item.sport.lowercase() + " gear"}",
+            style = GearType.headingXl,
+            color = GearText.primary,
+        )
         VGap(Space.s)
-        val count = spelled(Demo.captureAngles.size)
+        val count = spelled(angles.size)
         Text(
             "${count.replaceFirstChar { it.uppercase() }} angles. " +
-                "The same $count a renter checks against at handover.",
+                "The same $count a renter checks against at handover. $photoCount of ${angles.size} done.",
             style = GearType.bodyM,
             color = GearText.secondary,
         )
         VGap(Space.m)
+        GearTextField(title, label = "Title", placeholder = "e.g. Torq Mod Fish 6'6\" Softtop", onValueChange = { title = it })
+        VGap(Space.s)
+        GearTextField(size, label = "Size on the tag", placeholder = "e.g. 6'6\", M 52, 158", onValueChange = { size = it })
+        VGap(Space.m)
 
-        slots.chunked(2).forEach { pair ->
+        angles.chunked(2).forEachIndexed { row, pair ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                pair.forEachIndexed { i, slot ->
-                    PhotoSlot(slot, isHero = slot === slots.first(), modifier = Modifier.weight(1f))
+                pair.forEachIndexed { col, label ->
+                    val slot = row * 2 + col
+                    PhotoSlot(
+                        label = label,
+                        photo = item.photos.getOrNull(slot),
+                        isHero = slot == 0,
+                        // Slots fill in order, so the next empty one is the only
+                        // empty one that can be tapped.
+                        enabled = slot <= item.photos.size,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        if (slot < item.photos.size) editingSlot = slot else vm.addPhoto(slot)
+                    }
                 }
                 if (pair.size == 1) Spacer(Modifier.weight(1f))
             }
@@ -121,12 +182,39 @@ fun S25CreateListingPhotos(nav: Nav) {
             text = "Shoot in daylight against a plain wall. Listings with clear photos get booked 2.3× more.",
             kind = BannerKind.INFO,
         )
+        if (draft) {
+            VGap(Space.m)
+            GearLink("Delete this draft", { vm.discardListing { nav.back() } }, color = GearText.tertiary, icon = Lucide.Trash2)
+        }
         VGap(Space.section)
+    }
+
+    if (editingSlot >= 0) {
+        val label = angles.getOrElse(editingSlot) { "photo" }
+        GearDialog(
+            title = "$label photo",
+            onDismiss = { editingSlot = -1 },
+            confirmLabel = "Retake",
+            onConfirm = { vm.addPhoto(editingSlot); editingSlot = -1 },
+            destructiveLabel = "Remove",
+            onDestructive = { vm.removePhoto(editingSlot, label.lowercase()); editingSlot = -1 },
+        ) {
+            item.photos.getOrNull(editingSlot)?.let {
+                GearImage(it, label, Modifier.fillMaxWidth().height(180.dp), GearShape.md)
+            }
+        }
     }
 }
 
 @Composable
-private fun PhotoSlot(slot: Slot, isHero: Boolean, modifier: Modifier = Modifier) {
+private fun PhotoSlot(
+    label: String,
+    photo: Int?,
+    isHero: Boolean,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
     Column(modifier) {
         Box(
             Modifier
@@ -134,15 +222,22 @@ private fun PhotoSlot(slot: Slot, isHero: Boolean, modifier: Modifier = Modifier
                 .height(124.dp)
                 .clip(GearShape.sm)
                 .then(
-                    if (slot.photo == null) {
-                        Modifier.border(Border.medium, GearColor.Chalk300, GearShape.sm)
+                    if (photo == null) {
+                        Modifier.border(Border.medium, if (enabled) GearColor.Chalk300 else GearColor.Chalk200, GearShape.sm)
                     } else Modifier
                 )
-                .background(if (slot.photo == null) GearColor.Chalk50 else Color.Transparent),
+                .background(if (photo == null) GearColor.Chalk50 else Color.Transparent)
+                .clickable(
+                    enabled = enabled,
+                    role = Role.Button,
+                    onClickLabel = if (photo == null) "Add the $label photo" else "Retake or remove the $label photo",
+                    onClick = onClick,
+                )
+                .semantics { contentDescription = "$label photo slot" },
             contentAlignment = Alignment.Center,
         ) {
-            if (slot.photo != null) {
-                GearImage(slot.photo, slot.label, Modifier.fillMaxSize(), GearShape.sm)
+            if (photo != null) {
+                GearImage(photo, label, Modifier.fillMaxSize(), GearShape.sm)
                 if (isHero) {
                     Text(
                         "HERO",
@@ -165,43 +260,57 @@ private fun PhotoSlot(slot: Slot, isHero: Boolean, modifier: Modifier = Modifier
                         .padding(horizontal = 6.dp, vertical = 3.dp),
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        GearIcon(
-                            if (slot.warn) Lucide.TriangleAlert else Lucide.Check,
-                            null, size = 12.dp,
-                            tint = if (slot.warn) GearColor.Warning500 else GearColor.Success500,
-                        )
-                        Text(
-                            slot.quality.orEmpty(),
-                            style = GearType.labelXs,
-                            color = if (slot.warn) GearColor.Warning700 else GearColor.Success500,
-                        )
+                        GearIcon(Lucide.Check, null, size = 12.dp, tint = GearColor.Success500)
+                        Text("GOOD", style = GearType.labelXs, color = GearColor.Success500)
                     }
                 }
             } else {
-                // Just the affordance. The angle is named in the caption under
-                // every tile, filled or empty, so printing it inside an empty
-                // one as well said the same word twice, 12 dp apart.
-                GearIcon(Lucide.Camera, "Add the ${slot.label} photo", size = IconSize.l, tint = GearColor.Chalk400)
+                GearIcon(
+                    if (enabled) Lucide.Camera else Lucide.Lock, null,
+                    size = IconSize.l, tint = if (enabled) GearColor.Chalk400 else GearColor.Chalk300,
+                )
             }
         }
         VGap(5.dp)
-        Text(slot.label.uppercase(), style = GearType.labelXs, color = GearText.tertiary)
+        Text(label.uppercase(), style = GearType.labelXs, color = GearText.tertiary)
     }
 }
 
 /* ------------------------------------------------------------------ S-26 */
 
+/**
+ * S-26 · Read the listing; Update the daily rate, the duration discounts and
+ * the deposit waiver; Update a draft to published — at which point it is in
+ * search, in the owner's calendar, and, from a closet item, marked as listed.
+ */
 @Composable
 fun S26CreateListingPricing(nav: Nav) {
-    var price by rememberSaveable { mutableIntStateOf(Demo.SUGGESTED_PRICE) }
-    val discounts = rememberSavedStateList { Demo.durationDiscounts.map { it.third } }
-    var waiveDeposit by rememberSaveable { mutableIntStateOf(0) }
+    val vm: ExchangeSupplyViewModel = gearViewModel()
+    val item = rememberListing(vm)
+    if (item == null) {
+        GearScreen(appBar = { AppBar(onBack = { nav.back() }) }) {}
+        return
+    }
+    val draft = item.status == ListingStatus.DRAFT
+    val price = item.pricePerDay
+    val mine = item.owner.handle == Seed.ME
 
     GearScreen(
-        appBar = { AppBar(onBack = { nav.back() }) },
+        appBar = {
+            AppBar(
+                title = if (draft) "New listing" else item.shortTitle,
+                subtitle = if (mine) "YOUR CLOSET" else "KAVITHA SELVAM · OWNER",
+                onBack = { nav.back() },
+            )
+        },
         footer = {
-            StickyFooter {
-                GearButton("Continue", { nav.to("s24") }, Modifier.fillMaxWidth())
+            StickyFooter(priceValue = lkr(price), priceCaption = "a day") {
+                GearButton(
+                    if (draft) "Publish listing" else "Save changes",
+                    { vm.publish { if (draft) nav.to(if (mine) "s36" else "s24") else nav.back() } },
+                    size = ButtonSize.M,
+                    enabled = item.photos.isNotEmpty(),
+                )
             }
         },
     ) {
@@ -238,8 +347,9 @@ fun S26CreateListingPricing(nav: Nav) {
         ) {
             Stepper(
                 value = "",
-                onMinus = { price = (price - 100).coerceAtLeast(200) },
-                onPlus = { price = price + 100 },
+                onMinus = { vm.setPrice(price - 100) },
+                onPlus = { vm.setPrice(price + 100) },
+                minusEnabled = price > 200,
             )
             Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                 Row(verticalAlignment = Alignment.Bottom) {
@@ -248,6 +358,10 @@ fun S26CreateListingPricing(nav: Nav) {
                     Text(" / day", style = GearType.bodyM, color = GearText.tertiary, modifier = Modifier.padding(bottom = 5.dp))
                 }
             }
+        }
+        if (price != Demo.SUGGESTED_PRICE) {
+            VGap(Space.s)
+            GearLink("Use the suggested ${lkr(Demo.SUGGESTED_PRICE)}", { vm.setPrice(Demo.SUGGESTED_PRICE) })
         }
 
         VGap(Space.l)
@@ -259,11 +373,19 @@ fun S26CreateListingPricing(nav: Nav) {
         Eyebrow("Duration discounts")
         VGap(Space.s)
         Demo.durationDiscounts.forEachIndexed { i, (label, pct, _) ->
-            Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+            // The row is the switch, so it is announced as "3+ days, 10% off, on" (D-11).
+            val on = item.discounts.getOrElse(i) { false }
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = Metrics.tapTarget)
+                    .toggleable(value = on, role = Role.Switch, onValueChange = { vm.setDiscount(i, it) }),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Text(label, style = GearType.labelL, color = GearText.primary, modifier = Modifier.width(88.dp))
                 Text(pct, style = GearType.dataM, color = GearColor.Success500)
                 Spacer(Modifier.weight(1f))
-                Toggle(discounts[i], { discounts[i] = it })
+                Toggle(on, onCheckedChange = null)
             }
         }
 
@@ -272,22 +394,22 @@ fun S26CreateListingPricing(nav: Nav) {
         VGap(Space.s)
         SeasonCurve(Modifier.fillMaxWidth().height(120.dp))
         VGap(Space.s)
-        GearButton("Edit curve", { }, type = ButtonType.GHOST, size = ButtonSize.S)
+        Text("Surf season, June to August, is highlighted. Seasonal pricing arrives in the next release.", style = GearType.bodyS, color = GearText.tertiary)
 
         VGap(Space.l)
         Eyebrow("Deposit")
         VGap(Space.s)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text(lkr(25_000), style = GearType.dataL, color = GearText.primary)
-                Text("50% of the board's current value", style = GearType.bodyS, color = GearText.tertiary)
+                Text(lkr(item.deposit), style = GearType.dataL, color = GearText.primary)
+                Text("50% of the item's current value", style = GearType.bodyS, color = GearText.tertiary)
             }
         }
         VGap(Space.s)
         ToggleRow(
             "Waive deposit for renters with Plus protection",
-            waiveDeposit == 1,
-            { waiveDeposit = if (it) 1 else 0 },
+            item.waiveDepositWithPlus,
+            { vm.setWaiveDeposit(it) },
         )
 
         VGap(Space.m)
@@ -422,4 +544,3 @@ private fun SeasonCurve(modifier: Modifier = Modifier) {
         }
     }
 }
-

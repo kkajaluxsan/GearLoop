@@ -47,3 +47,93 @@ fun km(value: Double, suffix: String = ""): String {
 
 /** `2.4 km away` — the form used wherever the distance is to someone else's gear. */
 fun kmAway(value: Double): String = km(value, "away")
+
+// ------------------------------------------------------------------ dates
+//
+// Milestone 03 made dates data rather than copy, so they are formatted here once
+// for the same reason money is: two screens quoting one booking must not print
+// its dates two different ways.
+
+// English month and day names, not Locale.UK: the UK data abbreviates September
+// to "Sept", one letter longer than every other month, which broke the mono
+// date columns and the "30 Aug – 2 Sep" form documented below (D-17).
+private val uk = java.util.Locale.ENGLISH
+private val fmtDayMonth = java.time.format.DateTimeFormatter.ofPattern("d MMM", uk)
+private val fmtDay = java.time.format.DateTimeFormatter.ofPattern("d", uk)
+private val fmtWeekday = java.time.format.DateTimeFormatter.ofPattern("EEE", uk)
+private val fmtYear = java.time.format.DateTimeFormatter.ofPattern("yyyy", uk)
+private val fmtTime = java.time.format.DateTimeFormatter.ofPattern("HH:mm", uk)
+private val fmtMonthYear = java.time.format.DateTimeFormatter.ofPattern("MMMM yyyy", uk)
+
+/** `8 Aug` */
+fun dayMonth(date: java.time.LocalDate): String = date.format(fmtDayMonth)
+
+/** `8 – 10 Aug`, or `30 Aug – 2 Sep` across a month end. */
+fun dateRange(start: java.time.LocalDate, end: java.time.LocalDate): String =
+    if (start.month == end.month) "${start.format(fmtDay)} – ${end.format(fmtDayMonth)}"
+    else "${start.format(fmtDayMonth)} – ${end.format(fmtDayMonth)}"
+
+/** `Sat 8 – Mon 10 Aug 2026` */
+fun dateRangeLong(start: java.time.LocalDate, end: java.time.LocalDate): String {
+    val head = "${start.format(fmtWeekday)} ${start.format(fmtDay)}"
+    val tail = "${end.format(fmtWeekday)} ${end.format(fmtDayMonth)} ${end.format(fmtYear)}"
+    return if (start.month == end.month) "$head – $tail"
+    else "$head ${start.format(java.time.format.DateTimeFormatter.ofPattern("MMM", uk))} – $tail"
+}
+
+/** `August 2026` */
+fun monthYear(month: java.time.YearMonth): String = month.format(fmtMonthYear)
+
+/** `Sat 8 Aug, 09:00` */
+fun dayTime(time: java.time.LocalDateTime): String =
+    "${time.format(fmtWeekday)} ${time.format(fmtDayMonth)}, ${time.format(fmtTime)}"
+
+/** `5 Aug 2026, 09:14` — the form a signature or a ruling is stamped with. */
+fun stamp(time: java.time.LocalDateTime): String =
+    "${time.format(fmtDayMonth)} ${time.format(fmtYear)}, ${time.format(fmtTime)}"
+
+/** `08 AUG 08:57` — capture metadata, which is set in an uppercase mono style. */
+fun metaStamp(time: java.time.LocalDateTime): String =
+    time.format(java.time.format.DateTimeFormatter.ofPattern("dd MMM HH:mm", uk)).uppercase(uk)
+
+/** `09:42` */
+fun clockTime(time: java.time.LocalDateTime): String = time.format(fmtTime)
+
+/** `Tue 09:42` — how the message thread labels each message. */
+fun chatTime(time: java.time.LocalDateTime): String = "${time.format(fmtWeekday)} ${time.format(fmtTime)}"
+
+/**
+ * `09:42` today, then `Yesterday`, then the weekday, then the date — the order
+ * a notification list ages its rows in.
+ */
+fun relativeTime(time: java.time.LocalDateTime, now: java.time.LocalDateTime): String {
+    val days = java.time.temporal.ChronoUnit.DAYS.between(time.toLocalDate(), now.toLocalDate())
+    return when {
+        days <= 0L -> time.format(fmtTime)
+        days == 1L -> "Yesterday"
+        days < 7L -> time.format(fmtWeekday)
+        else -> time.format(fmtDayMonth)
+    }
+}
+
+/**
+ * `2d 04h 12m`, `3h 12m` or `12m` — a countdown at the precision that matters at
+ * that distance. Anything already past reads as zero rather than going negative.
+ */
+fun countdown(millis: Long): String {
+    val totalMin = (millis.coerceAtLeast(0) / 60_000)
+    val d = totalMin / (60 * 24)
+    val h = (totalMin / 60) % 24
+    val m = totalMin % 60
+    return when {
+        d > 0 -> "${d}d ${"%02d".format(h)}h ${"%02d".format(m)}m"
+        h > 0 -> "${h}h ${"%02d".format(m)}m"
+        else -> "${m}m"
+    }
+}
+
+/** `02:14:06` — the big pickup clock, hours running past 24 if they have to. */
+fun stopwatch(millis: Long): String {
+    val s = millis.coerceAtLeast(0) / 1000
+    return "%02d:%02d:%02d".format(s / 3600, (s / 60) % 60, s % 60)
+}

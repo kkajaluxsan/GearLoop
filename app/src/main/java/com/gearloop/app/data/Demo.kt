@@ -50,10 +50,15 @@ object Demo {
     // Join dates vary with how many rentals each has behind them — all four used
     // to fall back to the same "Mar 2025", which sat under three different
     // review counts on the requests inbox and read as placeholder data.
+    //
+    // Areas are the neighbourhood each owner's gear is collected from, and they
+    // have to agree with the distance printed beside them. Search read
+    // "0.8 km · Arugam Bay" — a town on the other side of the island — and put
+    // Point Pedro and Casuarina Beach, 20–35 km out, at 3 and 5 km (D-31, DV-32).
     val dinesh = Person("Dinesh Kumar", "@dinesh_k", "Gurunagar", TrustTier.SILVER, 4.7, 21, "~2 h", 3, "Aug 2024")
-    val thusara = Person("Thusara Perera", "@thusara_p", "Point Pedro", TrustTier.SILVER, 4.7, 12, "~3 h", 1, "Mar 2025")
-    val ayesha = Person("Ayesha Fernando", "@ayesha_f", "Casuarina Beach", TrustTier.GOLD, 4.9, 44, "~25 m", 4, "Feb 2024")
-    val rizwan = Person("Mohamed Rizwan", "@m_rizwan", "Arugam Bay", TrustTier.BRONZE, 4.5, 6, "~5 h", 2, "Jan 2026")
+    val thusara = Person("Thusara Perera", "@thusara_p", "Kokuvil", TrustTier.SILVER, 4.7, 12, "~3 h", 1, "Mar 2025")
+    val ayesha = Person("Ayesha Fernando", "@ayesha_f", "Ariyalai", TrustTier.GOLD, 4.9, 44, "~25 m", 4, "Feb 2024")
+    val rizwan = Person("Mohamed Rizwan", "@m_rizwan", "Chundikuli", TrustTier.BRONZE, 4.5, 6, "~5 h", 2, "Jan 2026")
 
     /** Nirmal's fit profile — the two numbers the whole product argument rests on. */
     const val HEIGHT_CM = 174
@@ -254,6 +259,108 @@ object Demo {
         sport = "Cycling",
         deposit = 30_000,
     )
+
+    // ------------------------------------------------------ Nirmal's own kit
+
+    /*
+     * What Nirmal owns besides the Burton: his gear closet (S-36), what he can
+     * offer in a swap (S-20) and what he already has for a trip (S-30).
+     *
+     * All three used to be filled with other members' listings — Kavitha's
+     * helmet, wetsuit and kayak, Rizwan's bat, Dinesh's rack — photographs and
+     * item codes included, so the closet claimed gear that search was renting
+     * out under someone else's name, and the Pelican Argo had four owners
+     * across four screens. Each of these is his, with its own photograph
+     * (D-30, DV-31).
+     */
+
+    val myHelmet = GearItem(
+        id = "myhelmet",
+        title = "ABUS Road Helmet — M",
+        shortTitle = "ABUS road helmet",
+        code = "AB-2208",
+        sizeLabel = "M 54-58",
+        grade = Grade.A,
+        pricePerDay = 350,
+        distanceKm = 0.0,
+        photos = listOf(R.drawable.photo_my_helmet),
+        owner = nirmal,
+        fit = Fit.PERFECT,
+        sport = "Cycling",
+        deposit = 2_500,
+    )
+
+    val myCampKit = GearItem(
+        id = "mycamp",
+        title = "Camping Kit — Stove, Mat, Lamp",
+        shortTitle = "Camping kit",
+        code = "CK-0412",
+        sizeLabel = "1P",
+        grade = Grade.B,
+        pricePerDay = 600,
+        distanceKm = 0.0,
+        photos = listOf(R.drawable.photo_gear_flatlay),
+        owner = nirmal,
+        fit = Fit.UNKNOWN,
+        sport = "Camping",
+        deposit = 4_000,
+    )
+
+    /** Idle longest, so it is the one S-36 suggests listing. */
+    val myKayak = GearItem(
+        id = "mykayak",
+        title = "Intex Challenger K1 Inflatable Kayak",
+        shortTitle = "Intex Challenger K1",
+        code = "IX-1190",
+        sizeLabel = "9'0\"",
+        grade = Grade.B,
+        pricePerDay = 1_200,
+        distanceKm = 0.0,
+        photos = listOf(R.drawable.photo_my_kayak),
+        owner = nirmal,
+        fit = Fit.GOOD,
+        sport = "Kayaking",
+        deposit = 8_000,
+    )
+
+    val myBat = GearItem(
+        id = "mybat",
+        title = "Gunn & Moore Flare DXM Bat SH",
+        shortTitle = "GM Flare DXM bat",
+        code = "GM-3317",
+        sizeLabel = "SH",
+        grade = Grade.B,
+        pricePerDay = 500,
+        distanceKm = 0.0,
+        photos = listOf(R.drawable.photo_my_bat),
+        owner = nirmal,
+        fit = Fit.PERFECT,
+        sport = "Cricket",
+        deposit = 3_000,
+    )
+
+    /**
+     * Ayesha's own kayak, which she puts into the three-way loop on S-23. The
+     * loop used to hand Nirmal "Ayesha's Pelican Argo" — the kayak Kavitha lists
+     * in search and takes requests for on S-28.
+     */
+    val ayeshaKayak = GearItem(
+        id = "sotkayak",
+        title = "12'0\" Touring Sit-on-Top Kayak",
+        shortTitle = "12' touring sit-on-top",
+        code = "ST-5530",
+        sizeLabel = "12'0\"",
+        grade = Grade.B,
+        pricePerDay = 2_200,
+        distanceKm = 4.7,
+        photos = listOf(R.drawable.photo_sot_kayak),
+        owner = ayesha,
+        fit = Fit.GOOD,
+        sport = "Kayaking",
+        deposit = 22_000,
+    )
+
+    const val AYESHA_KAYAK_FMV = 44_000
 
     val allListings = listOf(torq, trekMarlin, nspSup, quechuaTent, ssBat, kayak, helmet, climbingRack, wetsuit)
 
@@ -484,7 +591,9 @@ object Demo {
         SwapOffer(burton, nspSup, BURTON_FMV, 38_000, ayesha),
         SwapOffer(burton, kayak, BURTON_FMV, 44_000, kavitha),
         SwapOffer(burton, climbingRack, BURTON_FMV, 29_000, dinesh, threeWay = true),
-        SwapOffer(burton, trekMarlin, BURTON_FMV, 46_500, thusara),
+        // Thusara's own tent. This was the Trek Marlin "from Thusara", which is
+        // Kavitha's bike on every other screen.
+        SwapOffer(burton, quechuaTent, BURTON_FMV, 18_000, thusara),
     )
 
     val burtonValuation = listOf(
@@ -644,7 +753,7 @@ object Demo {
         VerificationStep("Government ID", "Rent items over LKR 100,000", VerificationStep.State.DONE),
         VerificationStep("Selfie match", "Instant book without approval", VerificationStep.State.DONE),
         VerificationStep("Payment method", "Deposits held, not charged", VerificationStep.State.DONE),
-        VerificationStep("Home address", "Accept delivery and list your own gear", VerificationStep.State.CURRENT),
+        VerificationStep(VerificationStep.HOME_ADDRESS, "Accept delivery and list your own gear", VerificationStep.State.CURRENT),
     )
 
     /**
@@ -751,9 +860,13 @@ object Demo {
     const val TRIP_TOTAL = 18_400
     const val TRIP_DISCOUNT = 2_100
 
+    /**
+     * From his own closet. The helmet here was Kavitha's listing, and the Burton
+     * was "Bring it" — a snowboard, to a surf trip on the east coast.
+     */
     val tripAlreadyOwn = listOf(
-        "Burton Custom 158" to "Bring it",
-        "Giro Fixture MIPS Helmet" to "Swap locally?",
+        myCampKit.shortTitle to "Bring it",
+        burton.shortTitle to "Swap it for surf gear?",
     )
     val tripRentLocally = listOf(
         torq to "For you",

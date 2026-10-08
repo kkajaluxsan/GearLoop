@@ -84,9 +84,11 @@ annotation class GearScreenPreview
 fun PreviewFrame(
     background: androidx.compose.ui.graphics.Color = GearSurface.app,
     padded: Boolean = true,
+    wireframe: Boolean = false,
+    blockText: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    GearLoopTheme {
+    GearLoopTheme(wireframe = wireframe, blockText = blockText) {
         Column(
             Modifier
                 .background(background)

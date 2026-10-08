@@ -1,5 +1,6 @@
 package com.gearloop.app
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -23,6 +24,13 @@ import com.gearloop.app.ui.theme.GearSurface
 import com.gearloop.app.ui.theme.LightPalette
 
 class MainActivity : ComponentActivity() {
+
+    // The two drawing flags are held here rather than read once in setContent, so
+    // that coming back to the app can switch them off (see onRestart and
+    // onSaveInstanceState).
+    private val wireframe = mutableStateOf(false)
+    private val blockText = mutableStateOf(false)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // Edge to edge. The bar scrims are transparent and the icon appearance is
         // set per screen by SystemBarIcons, because three screens are deliberately
@@ -51,7 +59,25 @@ class MainActivity : ComponentActivity() {
         // empty slots. Used to produce the wireframe set from the same source the
         // screens themselves come from, so the two can never drift apart:
         //   adb shell am start -n com.gearloop.app/.MainActivity --ez wire true
-        val wireframe = intent?.getBooleanExtra("wire", false) ?: false
+        //
+        // Only a fresh launch reads the flags from the intent. A launch from Recents
+        // replays the intent that first started the task, extras included, and an
+        // activity rebuilt after a font-size change or a process death would read it
+        // again too: after a wireframe capture, either brought the live demo back as
+        // grey boxes. A rebuild takes the flags from its saved state instead.
+        val fresh = savedInstanceState == null &&
+            ((intent?.flags ?: 0) and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) == 0
+        wireframe.value = if (fresh) intent?.getBooleanExtra("wire", false) == true
+        else savedInstanceState?.getBoolean(KEY_WIRE) == true
+
+        // Greeks every string into a bar, which is the other half of the wireframe
+        // convention — a reviewer looking at a wireframe should be reading the
+        // structure, not the copy. Independent of `wire`, so either can be used
+        // alone, though the wireframe set is captured with both:
+        //   adb shell am start -n com.gearloop.app/.MainActivity \
+        //     --es screen s07 --ez wire true --ez blocks true
+        blockText.value = if (fresh) intent?.getBooleanExtra("blocks", false) == true
+        else savedInstanceState?.getBoolean(KEY_BLOCKS) == true
 
         setContent {
             // Follows the system, with an override the cover can drive — a demo
@@ -59,7 +85,7 @@ class MainActivity : ComponentActivity() {
             var darkOverride by rememberSaveable { mutableStateOf<Boolean?>(null) }
             val dark = darkOverride ?: isSystemInDarkTheme()
 
-            GearLoopTheme(darkTheme = dark, wireframe = wireframe) {
+            GearLoopTheme(darkTheme = dark, wireframe = wireframe.value, blockText = blockText.value) {
                 GearLoopApp(
                     modifier = Modifier.fillMaxSize().background(GearSurface.app),
                     startDestination = start,
@@ -68,5 +94,34 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    /**
+     * Wireframe mode is for the capture scripts, which cold-start every screen and
+     * never leave the app. Tapping the launcher icon only brings the old task to the
+     * front, with no new intent to read, so without this the app stayed a wireframe
+     * until someone thought to force-stop it. Any return from the background now
+     * puts the real app back.
+     */
+    override fun onRestart() {
+        super.onRestart()
+        wireframe.value = false
+        blockText.value = false
+    }
+
+    /**
+     * Kept through a configuration change while the app is on screen. Saved as off
+     * otherwise, because the next time this activity is rebuilt from it, someone is
+     * coming back to the app.
+     */
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(KEY_WIRE, isChangingConfigurations && wireframe.value)
+        outState.putBoolean(KEY_BLOCKS, isChangingConfigurations && blockText.value)
+    }
+
+    private companion object {
+        const val KEY_WIRE = "gearloop.wire"
+        const val KEY_BLOCKS = "gearloop.blocks"
     }
 }

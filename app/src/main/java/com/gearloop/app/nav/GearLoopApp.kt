@@ -1,5 +1,17 @@
+@file:OptIn(kotlinx.coroutines.FlowPreview::class)
+
 package com.gearloop.app.nav
 
+import com.gearloop.app.container
+import com.gearloop.app.ui.feedback.ToastHost
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.launch
 import com.gearloop.app.data.SearchFilters
 import com.gearloop.app.data.LocalSearchFilters
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -37,6 +49,13 @@ import com.gearloop.app.screens.owner.*
 class Nav(
     private val controller: NavHostController,
     private val demo: DemoState,
+    /**
+     * Puts the database back to the seed, then runs the remount. Since Milestone
+     * 03 the screens' state lives in Room as well as in `rememberSaveable`, so a
+     * reset that only remounted would put the slider back and leave the booking.
+     */
+    private val resetData: (afterReset: () -> Unit) -> Unit = { it() },
+    private val playScenario: (com.gearloop.app.data.repo.DemoData.Scenario, afterReset: () -> Unit) -> Unit = { _, done -> done() },
 ) {
 
     fun to(route: String) {
@@ -88,23 +107,37 @@ class Nav(
         cover()
     }
 
-    /** Clear every screen's state without starting a walkthrough. */
+    /** Clear every screen's state and every record, without starting a walkthrough. */
     fun resetDemo() {
-        demo.exit()
-        demo.reset()
+        resetData {
+            demo.exit()
+            demo.reset()
+        }
     }
 
     /**
-     * Back to a clean demo: state cleared, walkthrough restarted from step one.
-     * Everything a previous run touched — the fairness slider, the fit profile,
-     * the filter sheet — goes back to how it was designed.
+     * Back to a clean demo: data reseeded, state cleared, walkthrough restarted
+     * from step one. Everything a previous run touched — the booking it made, the
+     * fairness slider, the fit profile, the filter sheet — goes back to how it
+     * was designed.
      *
      * No navigation call here on purpose. Bumping the generation remounts the
      * graph, and the new one opens at whichever step the walkthrough is on.
      */
     fun restartFlow() {
-        demo.moveTo(0)
-        demo.reset()
+        resetData {
+            demo.moveTo(0)
+            demo.reset()
+        }
+    }
+
+    /** Fast-forward to a prepared state, then open the screen it is about. */
+    fun play(scenario: com.gearloop.app.data.repo.DemoData.Scenario, landOn: String) {
+        playScenario(scenario) {
+            demo.exit()
+            demo.landing = landOn
+            demo.reset()
+        }
     }
 }
 
@@ -120,34 +153,74 @@ fun GearLoopApp(
 ) {
     val demo = rememberSaveable(saver = DemoState.Saver) { DemoState() }
     val filters = rememberSaveable(saver = SearchFilters.Saver) { SearchFilters() }
+    val app = LocalContext.current.container
+    val scope = rememberCoroutineScope()
+
+    // The filter sheet opens as it was left. Read once, then written back a
+    // moment after each change — debounced, so dragging the price slider is one
+    // write rather than sixty.
+    LaunchedEffect(filters) {
+        app.discovery.loadSearchPrefs()?.let { if (filters.isDefault) filters.restoreFrom(it) }
+        snapshotFlow { filters.snapshot }
+            .drop(1)
+            .debounce(300)
+            .collect {
+                // Back at the defaults is a delete, not a save of the defaults —
+                // "Reset" on S-06 removes the stored row.
+                if (filters.isDefault) app.discovery.clearSearchPrefs()
+                else app.discovery.saveSearchPrefs(filters)
+            }
+    }
+
+    val resetData: (() -> Unit) -> Unit = { after ->
+        scope.launch {
+            app.demo.reset()
+            filters.reset()
+            after()
+        }
+    }
+    val playScenario: (com.gearloop.app.data.repo.DemoData.Scenario, () -> Unit) -> Unit = { scenario, after ->
+        scope.launch {
+            app.demo.play(scenario)
+            filters.reset()
+            after()
+        }
+    }
 
     CompositionLocalProvider(
         LocalDemoState provides demo,
         LocalSearchFilters provides filters,
         LocalThemeToggle provides ThemeToggle(darkTheme, onToggleTheme),
     ) {
-        Column(modifier) {
-            // Remounting on `generation` is what makes "reset the demo" real —
-            // every screen's saved state goes with it. The controller lives
-            // inside the key so it is rebuilt too, and the bar and the host are
-            // both inside it so they share one Nav rather than reaching for a
-            // global.
-            key(demo.generation) {
-                val controller = rememberNavController()
-                val nav = remember(controller, demo) { Nav(controller, demo) }
+        Box(modifier) {
+            Column(Modifier.fillMaxSize()) {
+                // Remounting on `generation` is what makes "reset the demo" real —
+                // every screen's saved state goes with it. The controller lives
+                // inside the key so it is rebuilt too, and the bar and the host are
+                // both inside it so they share one Nav rather than reaching for a
+                // global.
+                key(demo.generation) {
+                    val controller = rememberNavController()
+                    val nav = remember(controller, demo) { Nav(controller, demo, resetData, playScenario) }
 
-                // After a reset the graph reopens wherever the walkthrough is,
-                // which is step one — that is the whole point of restarting.
-                val start = demo.flow?.routes?.getOrNull(demo.step) ?: startDestination
+                    // After a reset the graph reopens wherever the walkthrough is,
+                    // which is step one — that is the whole point of restarting.
+                    // A scenario names its own landing screen instead.
+                    val start = demo.flow?.routes?.getOrNull(demo.step)
+                        ?: demo.landing
+                        ?: startDestination
+                    LaunchedEffect(Unit) { demo.landing = null }
 
-                GuidedBar(
-                    state = demo,
-                    onStep = nav::goToStep,
-                    onRestart = nav::restartFlow,
-                    onExit = nav::exitFlow,
-                )
-                GearLoopNavHost(controller, nav, start, Modifier.weight(1f))
+                    GuidedBar(
+                        state = demo,
+                        onStep = nav::goToStep,
+                        onRestart = nav::restartFlow,
+                        onExit = nav::exitFlow,
+                    )
+                    GearLoopNavHost(controller, nav, start, Modifier.weight(1f))
+                }
             }
+            ToastHost(app.toaster)
         }
     }
 }
@@ -184,6 +257,7 @@ private fun GearLoopNavHost(
         composable(Routes.BOARD_SIGNATURE) { SignatureBoard(nav) }
         composable(Routes.BOARD_MAP) { ScreenMapBoard(nav) }
         composable(Routes.CREDITS) { CreditsScreen(nav) }
+        composable(Routes.PRIVACY) { PrivacyScreen(nav) }
 
         // ---- Tier 1 — the golden path --------------------------------------
         composable("s01") { S01IntentSelector(nav) }

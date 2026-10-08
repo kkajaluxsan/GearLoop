@@ -20,7 +20,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Text
+import com.gearloop.app.ui.theme.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,6 +41,9 @@ import com.gearloop.app.ui.theme.GearSurface
 import com.gearloop.app.ui.theme.GearText
 import com.gearloop.app.ui.theme.GearType
 import com.gearloop.app.ui.theme.Space
+import androidx.compose.ui.platform.LocalUriHandler
+import com.gearloop.app.BuildConfig
+import com.gearloop.app.data.repo.DemoData
 
 /**
  * Page 00 — Cover.
@@ -75,10 +78,12 @@ fun CoverScreen(nav: Nav) {
         )
 
         VGap(Space.l)
+        // Counted from the catalogue, so the cover agrees with the index it opens:
+        // a hardcoded 42 sat over the 44 the app now has (S-15b and S-18b included).
         Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-            CoverStat("42", "Screens")
+            CoverStat("${Catalogue.screens.size}", "Screens")
             CoverStat("26", "Components")
-            CoverStat("3", "Flows")
+            CoverStat("${Catalogue.flows.size}", "Flows")
         }
 
         VGap(Space.section)
@@ -109,7 +114,7 @@ fun CoverScreen(nav: Nav) {
         BoardRow("Components", "All 26, every state", Lucide.Boxes) { nav.to(Routes.BOARD_COMPONENTS) }
         BoardRow("Signature elements", "Gear tag, fit stamp, fairness meter", Lucide.Tag) { nav.to(Routes.BOARD_SIGNATURE) }
         BoardRow("The user journey", "Flow A, screen by screen", Lucide.Workflow) { nav.to(Routes.BOARD_JOURNEY) }
-        BoardRow("Screen map", "All 42, grouped by area", Lucide.LayoutGrid) { nav.to(Routes.BOARD_MAP) }
+        BoardRow("Screen map", "All ${Catalogue.screens.size}, grouped by area", Lucide.LayoutGrid) { nav.to(Routes.BOARD_MAP) }
 
         VGap(Space.l)
         Eyebrow("Everything else", color = GearColor.HiVis500)
@@ -117,6 +122,7 @@ fun CoverScreen(nav: Nav) {
         BoardRow("Screen index", "Jump to any screen by number", Lucide.List) { nav.to(Routes.SCREEN_INDEX) }
         BoardRow("Admin console (desktop)", "1440 × 1024 claims adjudication", Lucide.Monitor) { nav.to("s40") }
         BoardRow("Image credits", "Photography licences and attribution", Lucide.CircleHelp) { nav.to(Routes.CREDITS) }
+        BoardRow("Privacy policy", "What stays on the phone, which is everything", Lucide.ShieldCheck) { nav.to(Routes.PRIVACY) }
 
         val theme = LocalThemeToggle.current
         BoardRow(
@@ -128,10 +134,31 @@ fun CoverScreen(nav: Nav) {
         )
         BoardRow(
             title = "Reset the demo",
-            body = "Clears every screen — the fairness slider, the fit profile, the filters.",
+            body = "Puts every record back as seeded and clears every screen. Run it between usability sessions.",
             icon = Lucide.RotateCw,
             onClick = nav::resetDemo,
         )
+
+        VGap(Space.l)
+        Eyebrow("Prepared states", color = GearColor.HiVis500)
+        VGap(Space.xs)
+        Text(
+            "Each one resets the data, then runs the same steps a renter would, so " +
+                "the screen it opens on is reached by the app rather than drawn.",
+            style = GearType.bodyS,
+            color = GearColor.Chalk400,
+        )
+        VGap(Space.sm)
+        BoardRow(
+            title = DemoData.Scenario.MID_RENTAL.title,
+            body = DemoData.Scenario.MID_RENTAL.blurb,
+            icon = Lucide.Package,
+        ) { nav.play(DemoData.Scenario.MID_RENTAL, "s17") }
+        BoardRow(
+            title = DemoData.Scenario.CLAIM_OPEN.title,
+            body = DemoData.Scenario.CLAIM_OPEN.blurb,
+            icon = Lucide.TriangleAlert,
+        ) { nav.play(DemoData.Scenario.CLAIM_OPEN, "s34") }
 
         VGap(Space.l)
         Text(
@@ -226,7 +253,7 @@ private fun BoardRow(title: String, body: String, icon: LucideIcon, onClick: () 
 @Composable
 fun ScreenIndex(nav: Nav) {
     GearScreen(
-        appBar = { AppBar(title = "All 42 screens", onBack = { nav.back() }) },
+        appBar = { AppBar(title = "All ${Catalogue.screens.size} screens", onBack = { nav.back() }) },
     ) {
         VGap(Space.s)
         Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
@@ -293,7 +320,7 @@ fun CreditsScreen(nav: Nav) {
         VGap(Space.s)
         Text(
             "All photography is Creative Commons or public domain, sourced through " +
-                "Openverse. Only licences that permit derivative works were used, because " +
+                "Openverse and Wikimedia Commons. Only licences that permit derivative works were used, because " +
                 "every frame is re-cropped and colour-graded to a common treatment.",
             style = GearType.bodyM,
             color = GearText.secondary,
@@ -332,5 +359,111 @@ fun CreditsScreen(nav: Nav) {
             GearDivider()
         }
         VGap(Space.section)
+    }
+}
+
+/**
+ * Where the full policy is published. Play Console and App Store Connect both
+ * require a public URL, and the store listing, the policy page and this screen
+ * must all quote the same one.
+ */
+private const val PRIVACY_POLICY_URL = "https://kkajaluxsan.github.io/gearloop-privacy/"
+
+/**
+ * The privacy policy, in the app as well as on the web. The app runs offline,
+ * so the substance is on this screen and the link to the full text is an extra.
+ * Every point here is checkable against the build: the merged manifest asks for
+ * no platform permission, so the app cannot reach the network, the camera or
+ * location even if a later screen tried, and Auto Backup is switched off.
+ */
+@Composable
+fun PrivacyScreen(nav: Nav) {
+    val uriHandler = LocalUriHandler.current
+    GearScreen(
+        appBar = { AppBar(title = "Privacy policy", onBack = { nav.back() }) },
+    ) {
+        VGap(Space.s)
+        Text(
+            "What you do in GearLoop stays on this phone.",
+            style = GearType.headingM,
+            color = GearText.primary,
+        )
+        VGap(Space.s)
+        Text(
+            "Bookings, messages, reviews and your fit profile are saved in a database " +
+                "on the device so they are still there tomorrow. None of it is sent anywhere.",
+            style = GearType.bodyM,
+            color = GearText.secondary,
+        )
+        VGap(Space.l)
+
+        PrivacyPoint(
+            Lucide.ShieldCheck, "Nothing leaves your phone",
+            "The app has no internet permission, so Android will not let it open a " +
+                "connection, and it is excluded from cloud backup.",
+        )
+        PrivacyPoint(
+            Lucide.Lock, "No account",
+            "There is no sign-up and no login. The profile on this phone is a sample " +
+                "one, so there is nothing to identify you by.",
+        )
+        PrivacyPoint(
+            Lucide.FileText, "Stored only on the device",
+            "Your measurements, bookings and messages live in the app's private " +
+                "storage. Uninstalling the app, or Reset the demo on the cover, removes them.",
+        )
+        PrivacyPoint(
+            Lucide.Shield, "No camera, location or contacts",
+            "Condition capture records sample frames with the agreed pickup point, " +
+                "and the map is drawn. The app never asks for your camera, location, contacts or photos.",
+        )
+        PrivacyPoint(
+            Lucide.CircleHelp, "Sample people, sample money",
+            "The other people, listings and prices are demonstration data. Payments " +
+                "are recorded in the app's wallet, and no real money is ever taken.",
+        )
+
+        VGap(Space.l)
+        Text(
+            "The full policy, including your rights under the GDPR and Sri Lanka's " +
+                "Personal Data Protection Act, is published online.",
+            style = GearType.bodyS,
+            color = GearText.secondary,
+        )
+        VGap(Space.sm)
+        GearButton(
+            label = "Read the full policy",
+            onClick = { runCatching { uriHandler.openUri(PRIVACY_POLICY_URL) } },
+            type = ButtonType.SECONDARY,
+            trailingIcon = Lucide.ExternalLink,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        VGap(Space.s)
+        Text(
+            "Opens in your browser. That request is made by the browser, not by GearLoop.",
+            style = GearType.bodyS,
+            color = GearText.tertiary,
+        )
+        VGap(Space.l)
+        Text(
+            "VERSION ${BuildConfig.VERSION_NAME} · UPDATED 2 OCT 2026",
+            style = GearType.dataS,
+            color = GearText.tertiary,
+        )
+        VGap(Space.section)
+    }
+}
+
+@Composable
+private fun PrivacyPoint(icon: LucideIcon, title: String, body: String) {
+    Row(Modifier.fillMaxWidth().padding(vertical = Space.s), verticalAlignment = Alignment.Top) {
+        // Ink, like the title beside it: pine/800 vanished on the dark surface (QA-08).
+        GearIcon(icon, null, size = IconSize.m, tint = GearText.primary)
+        Spacer(Modifier.width(Space.sm))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = GearType.labelL, color = GearText.primary)
+            VGap(2.dp)
+            Text(body, style = GearType.bodyS, color = GearText.secondary)
+        }
     }
 }

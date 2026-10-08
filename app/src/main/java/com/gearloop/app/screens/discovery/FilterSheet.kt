@@ -15,7 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Text
+import com.gearloop.app.ui.theme.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -31,6 +31,9 @@ import androidx.compose.ui.unit.dp
 import com.gearloop.app.data.Demo
 import com.gearloop.app.data.lkr
 import com.gearloop.app.nav.Nav
+import com.gearloop.app.ui.vm.FitDiscoveryViewModel
+import com.gearloop.app.ui.vm.gearViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gearloop.app.ui.components.*
 import com.gearloop.app.ui.theme.GearColor
 import com.gearloop.app.ui.theme.GearShape
@@ -43,12 +46,20 @@ import kotlin.math.roundToInt
 /* ------------------------------------------------------------------ S-06 */
 
 
+/**
+ * S-06 · Read the sheet's stored state (restored by the app shell on launch);
+ * every change is an Update written back a moment later; Reset deletes the
+ * stored row, so the next launch opens on the defaults.
+ */
 @Composable
 fun S06FilterSheet(nav: Nav) {
+    val vm: FitDiscoveryViewModel = gearViewModel()
+    val all by vm.searchable.collectAsStateWithLifecycle()
+    val profile by vm.profile.collectAsStateWithLifecycle()
     // The sheet doesn't own these — it edits the same object S-05 renders from,
     // which is what makes the result count underneath it true rather than drawn.
     val filters = LocalSearchFilters.current
-    val matches = filters.apply(Demo.allListings).size
+    val matches = filters.apply(all).size
 
     Column(Modifier.fillMaxSize().background(GearSurface.darkest.copy(alpha = 0.45f))) {
         // Tapping the dimmed area behind the sheet dismisses it.
@@ -94,7 +105,10 @@ fun S06FilterSheet(nav: Nav) {
                     title = "Only show gear that fits me",
                     checked = filters.fitOnly,
                     onCheckedChange = { filters.fitOnly = it },
-                    helper = "Based on ${Demo.HEIGHT_CM} cm, ${Demo.WEIGHT_KG} kg",
+                    helper = profile?.let { p ->
+                        if (p.heightCm != null && p.weightKg != null) "Based on ${p.heightCm} cm, ${p.weightKg} kg"
+                        else "Add your height on your fit profile first"
+                    },
                 )
 
                 SectionGap()
@@ -119,6 +133,9 @@ fun S06FilterSheet(nav: Nav) {
                     upper = filters.priceUpper,
                     onRangeChange = { l, u -> filters.priceLower = l; filters.priceUpper = u },
                     histogram = Demo.priceHistogram,
+                    lowerLabel = "Minimum price",
+                    upperLabel = "Maximum price",
+                    valueText = { lkr(filters.priceAt(it)) },
                 )
 
                 SectionGap()

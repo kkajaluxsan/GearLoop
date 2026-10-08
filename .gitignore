@@ -25,3 +25,10 @@ build/
 # convention stays, because the appendix references it.
 docs/ux-research/appendix/raw/*
 !docs/ux-research/appendix/raw/README.md
+
+# Release signing. The upload key and its passwords are submitted separately and
+# never committed — a keystore in version control is a keystore that has to be
+# replaced. keystore.properties.example documents the four keys it must hold.
+/keystore.properties
+*.jks
+*.keystore

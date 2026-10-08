@@ -5,10 +5,11 @@ import androidx.annotation.DrawableRes
 /**
  * The shapes behind the screens.
  *
- * This is a UI/UX prototype — there is no backend, no persistence and no
- * network. Everything renders from the fixed dataset in [Demo], which is the
- * dataset named in the design brief. Holding it in one place is what keeps the
- * Torq's price identical on all eleven screens it appears on.
+ * Since Milestone 03 these are the *domain* types: the repositories read rows out
+ * of the Room database and hand the screens these, so a screen never sees an
+ * entity or a cursor. [Demo] is still the single source of truth for the data
+ * the database is seeded with — the Torq costs the same everywhere because it is
+ * written down once, and the seed copies it from there.
  *
  * These types carry no colours. A colour depends on the active theme, so it
  * cannot be settled when an enum constant is created — the accompanying
@@ -81,9 +82,30 @@ data class GearItem(
     val available: Boolean = true,
     val nextFree: String? = null,
     val saved: Boolean = false,
+    // ---- Milestone 03: fields the database carries per listing. Defaults keep
+    // every GearItem in [Demo] compiling unchanged; the seed fills them in.
+    val status: ListingStatus = ListingStatus.PUBLISHED,
+    /** Identical units of the same listing, each a row in the owner calendar. */
+    val units: Int = 1,
+    /** Board volume in litres, where fit is judged on float rather than size. */
+    val volumeL: Int? = null,
+    /** Frame band for bikes — `M` — where fit is judged against the rider's height. */
+    val frameBand: String? = null,
+    val specs: List<SpecRow> = emptyList(),
+    val included: List<String> = emptyList(),
+    val excluded: List<String> = emptyList(),
+    @param:DrawableRes val conditionPhotos: List<Int> = emptyList(),
+    val conditionNote: String = "",
+    val conditionDate: String = "",
+    /** Extras that travel with every booking of this item, priced per day. */
+    val extras: List<Extra> = emptyList(),
+    /** 3+, 7+ and 14+ day discounts, on or off. */
+    val discounts: List<Boolean> = listOf(true, true, false),
+    val waiveDepositWithPlus: Boolean = false,
 ) {
+    /** The first photograph; a draft with none yet shows the neutral flat-lay. */
     @get:DrawableRes
-    val hero: Int get() = photos.first()
+    val hero: Int get() = photos.firstOrNull() ?: com.gearloop.app.R.drawable.photo_gear_flatlay
 
     /** `6'6" · GRADE B · TQ-4471` — the full tag, for detail and list views. */
     val tagLine: String get() = "$sizeLabel · GRADE ${grade.letter} · $code"
@@ -97,6 +119,69 @@ data class GearItem(
 }
 
 data class SpecRow(val label: String, val value: String, val fitRelevant: Boolean = false)
+
+/** Something rented alongside the item, like the Torq's rash guard. */
+data class Extra(val name: String, val perDay: Int)
+
+enum class ListingStatus { DRAFT, PUBLISHED, PAUSED }
+
+/**
+ * A booking's life, in order. The renter's screens and the owner's screens read
+ * the same row, so a request accepted in the owner's inbox is confirmed in the
+ * renter's rentals list without anything being copied between them.
+ */
+enum class BookingStatus(val label: String) {
+    DRAFT("Draft"),
+    REQUESTED("Awaiting owner"),
+    CONFIRMED("Confirmed"),
+    ACTIVE("In progress"),
+    RETURNED("Owner checking"),
+    COMPLETED("Completed"),
+    DECLINED("Declined"),
+    CANCELLED("Cancelled"),
+    ;
+
+    /** Statuses that occupy the calendar — a declined request frees its dates. */
+    val holdsDates: Boolean get() = this in setOf(REQUESTED, CONFIRMED, ACTIVE, RETURNED)
+}
+
+/**
+ * The three protection plans on S-09. The numbers that decide what a renter can
+ * lose live here, so the plan card, the bill and the wallet quote one source.
+ */
+enum class Protection(val label: String, val perDay: Int, val excess: Int?, val theftCovered: Boolean) {
+    BASIC("Basic", 0, null, false),
+    PLUS("Plus", 420, 3_000, false),
+    PRO("Pro", 780, 0, true),
+    ;
+
+    /** Basic is the only plan that holds a deposit. */
+    val holdsDeposit: Boolean get() = this == BASIC
+
+    /** The most a renter could be asked to pay for damage under this plan (FR-05). */
+    fun mostYouCouldLose(deposit: Int): Int = excess ?: deposit
+}
+
+/** Which side of the rental a capture or a damage mark belongs to. */
+enum class Phase { PICKUP, RETURN }
+
+enum class ClaimStatus(val label: String) {
+    OPEN("Awaiting renter"),
+    CONTESTED("Contested"),
+    ACCEPTED("Accepted by renter"),
+    MORE_EVIDENCE("More evidence requested"),
+    ESCALATED("Escalated"),
+    DECIDED("Ruling issued"),
+}
+
+enum class ProposalStatus(val label: String) {
+    DRAFT("Draft"),
+    SENT("Sent"),
+    COUNTERED("Countered"),
+    ACCEPTED("Accepted"),
+    DECLINED("Declined"),
+    WITHDRAWN("Withdrawn"),
+}
 
 data class PriceLine(
     val label: String,
@@ -242,6 +327,18 @@ data class VerificationStep(
     val state: State,
 ) {
     enum class State { DONE, CURRENT, LOCKED }
+
+    /** The one step that stores something: the address it verified. */
+    val isHomeAddress: Boolean get() = title == HOME_ADDRESS
+
+    companion object {
+        /**
+         * Matched by name, not by the word "address": "Email address" contains
+         * it too, which put the home address and its remove link under the
+         * email step and made removing it re-open email instead (D-12).
+         */
+        const val HOME_ADDRESS = "Home address"
+    }
 }
 
 /**

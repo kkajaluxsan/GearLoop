@@ -19,7 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Text
+import com.gearloop.app.ui.theme.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -33,6 +33,10 @@ import androidx.compose.ui.unit.dp
 import com.gearloop.app.data.Demo
 import com.gearloop.app.data.FitLogic
 import com.gearloop.app.nav.Nav
+import com.gearloop.app.ui.vm.FitDiscoveryViewModel
+import com.gearloop.app.ui.vm.gearViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlin.math.roundToInt
 import com.gearloop.app.ui.components.*
 import com.gearloop.app.ui.icons.GearIcon
 import com.gearloop.app.ui.icons.IconSize
@@ -64,9 +68,18 @@ private val intents = listOf(
     Intent(Lucide.Workflow, "All of it", "The full loop"),
 )
 
+/**
+ * S-01 · Read the saved intent, Update it on Continue.
+ *
+ * The choice is held on screen until Continue, so tapping between the four cards
+ * is free; Continue is the write. "Skip" leaves the stored answer alone.
+ */
 @Composable
 fun S01IntentSelector(nav: Nav) {
-    var selected by rememberSaveable { mutableIntStateOf(0) }
+    val vm: FitDiscoveryViewModel = gearViewModel()
+    val profile by vm.profile.collectAsStateWithLifecycle()
+    var picked by rememberSaveable { mutableIntStateOf(-1) }
+    val selected = if (picked >= 0) picked else profile?.intent ?: 0
 
     GearScreen(
         appBar = {
@@ -77,7 +90,7 @@ fun S01IntentSelector(nav: Nav) {
         },
         footer = {
             StickyFooter {
-                GearButton("Continue", { nav.to("s02") }, Modifier.fillMaxWidth())
+                GearButton("Continue", { vm.setIntent(selected) { nav.to("s02") } }, Modifier.fillMaxWidth())
             }
         },
     ) {
@@ -91,7 +104,7 @@ fun S01IntentSelector(nav: Nav) {
         VGap(Space.l)
 
         intents.forEachIndexed { i, intent ->
-            IntentCard(intent, i == selected) { selected = i }
+            IntentCard(intent, i == selected) { picked = i }
             if (i != intents.lastIndex) VGap(Space.listGap)
         }
         VGap(Space.l)
@@ -156,15 +169,24 @@ private fun IntentCard(intent: Intent, selected: Boolean, onClick: () -> Unit) {
  */
 @Composable
 fun S02FitProfile(nav: Nav) {
-    var height by rememberSaveable { mutableIntStateOf(Demo.HEIGHT_CM) }
-    var weight by rememberSaveable { mutableIntStateOf(Demo.WEIGHT_KG) }
-    var metric by rememberSaveable { mutableStateOf(true) }
+    val vm: FitDiscoveryViewModel = gearViewModel()
+    val profile by vm.profile.collectAsStateWithLifecycle()
+    // Read: the stored measurements, or the reference rider while there are none.
+    // The steppers edit a copy; "Save and continue" is the Update.
+    var height by rememberSaveable { mutableIntStateOf(profile?.heightCm ?: Demo.HEIGHT_CM) }
+    var weight by rememberSaveable { mutableIntStateOf(profile?.weightKg ?: Demo.WEIGHT_KG) }
+    var metric by rememberSaveable { mutableStateOf(profile?.metric ?: true) }
+    val saved = profile?.hasMeasurements == true
 
     GearScreen(
         appBar = { AppBar(onBack = { nav.back() }) },
         footer = {
             StickyFooter {
-                GearButton("Save and continue", { nav.to("s03") }, Modifier.fillMaxWidth())
+                GearButton(
+                    "Save and continue",
+                    { vm.saveMeasurements(height, weight, metric) { nav.to("s03") } },
+                    Modifier.fillMaxWidth(),
+                )
             }
         },
     ) {
@@ -178,18 +200,21 @@ fun S02FitProfile(nav: Nav) {
         )
         VGap(Space.l)
 
+        // The values are kept in centimetres and kilograms either way; Imperial
+        // converts what is displayed. The prototype only swapped the unit label,
+        // so a 174 cm rider read as "174 in" (defect D-03).
         Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
             MeasureField(
                 label = "Height",
-                value = height,
-                unit = if (metric) "cm" else "in",
+                value = if (metric) "$height" else FitLogic.cmToFeetInches(height),
+                unit = if (metric) "cm" else "",
                 modifier = Modifier.weight(1f),
                 onMinus = { height = (height - 1).coerceAtLeast(130) },
                 onPlus = { height = (height + 1).coerceAtMost(215) },
             )
             MeasureField(
                 label = "Weight",
-                value = weight,
+                value = if (metric) "$weight" else "${(weight * 2.20462).roundToInt()}",
                 unit = if (metric) "kg" else "lb",
                 modifier = Modifier.weight(1f),
                 onMinus = { weight = (weight - 1).coerceAtLeast(35) },
@@ -201,7 +226,15 @@ fun S02FitProfile(nav: Nav) {
             Chip("Metric", selected = metric, onClick = { metric = true })
             Chip("Imperial", selected = !metric, onClick = { metric = false })
             Spacer(Modifier.weight(1f))
-            Text("Shoe EU ${Demo.SHOE_EU}", style = GearType.dataM, color = GearText.tertiary)
+            Text("Shoe EU ${profile?.shoeEu ?: Demo.SHOE_EU}", style = GearType.dataM, color = GearText.tertiary)
+        }
+        if (!saved) {
+            VGap(Space.s)
+            Text(
+                "Not saved yet. Until you save, every listing says “add your height”.",
+                style = GearType.bodyS,
+                color = GearText.secondary,
+            )
         }
 
         VGap(Space.l)
@@ -240,7 +273,17 @@ fun S02FitProfile(nav: Nav) {
         )
 
         VGap(Space.m)
-        GearButton("Skip for now", { nav.to("s03") }, type = ButtonType.GHOST, size = ButtonSize.M)
+        Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+            GearButton("Skip for now", { nav.to("s03") }, type = ButtonType.GHOST, size = ButtonSize.M)
+            // Delete: take the measurements off the profile. Every stamp in the
+            // app falls back to "add your height" rather than guessing (FR-03).
+            if (saved) {
+                GearButton(
+                    "Remove my measurements", { vm.clearMeasurements() },
+                    type = ButtonType.GHOST, size = ButtonSize.M, icon = Lucide.Trash2,
+                )
+            }
+        }
         VGap(Space.section)
     }
 }
@@ -248,7 +291,7 @@ fun S02FitProfile(nav: Nav) {
 @Composable
 private fun MeasureField(
     label: String,
-    value: Int,
+    value: String,
     unit: String,
     onMinus: () -> Unit,
     onPlus: () -> Unit,
@@ -264,8 +307,10 @@ private fun MeasureField(
         Text(label, style = GearType.labelM, color = GearText.secondary)
         VGap(Space.s)
         Row(verticalAlignment = Alignment.Bottom) {
-            Text("$value", style = GearType.dataXl, color = GearText.primary)
-            Text(" $unit", style = GearType.bodyM, color = GearText.tertiary, modifier = Modifier.padding(bottom = 4.dp))
+            Text(value, style = GearType.dataXl, color = GearText.primary)
+            if (unit.isNotEmpty()) {
+                Text(" $unit", style = GearType.bodyM, color = GearText.tertiary, modifier = Modifier.padding(bottom = 4.dp))
+            }
         }
         VGap(Space.s)
         Stepper(value = "", onMinus = onMinus, onPlus = onPlus, modifier = Modifier.fillMaxWidth())
@@ -274,9 +319,14 @@ private fun MeasureField(
 
 /* ------------------------------------------------------------------ S-03 */
 
+/**
+ * S-03 · Read the saved sports; each tap is a Create or a Delete straight away,
+ * so the choice survives leaving the screen without a save button.
+ */
 @Composable
 fun S03SportInterests(nav: Nav) {
-    val chosen = rememberSavedStateList { listOf("Surfing", "Cycling", "SUP") }
+    val vm: FitDiscoveryViewModel = gearViewModel()
+    val chosen by vm.sports.collectAsStateWithLifecycle()
 
     GearScreen(
         appBar = { AppBar(onBack = { nav.back() }) },
@@ -310,7 +360,7 @@ fun S03SportInterests(nav: Nav) {
                         photo = photo,
                         selected = name in chosen,
                         modifier = Modifier.weight(1f),
-                        onClick = { if (name in chosen) chosen.remove(name) else chosen.add(name) },
+                        onClick = { vm.toggleSport(name) },
                     )
                 }
                 if (pair.size == 1) Spacer(Modifier.weight(1f))

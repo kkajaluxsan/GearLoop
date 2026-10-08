@@ -4,6 +4,10 @@ import com.gearloop.app.ui.theme.color
 import com.gearloop.app.ui.theme.accent
 import com.gearloop.app.ui.theme.ink
 import com.gearloop.app.ui.theme.Border
+import com.gearloop.app.ui.theme.Metrics
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.Role
 import com.gearloop.app.ui.preview.PreviewFrame
 import com.gearloop.app.ui.preview.GearTypePreview
@@ -27,7 +31,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Text
+import com.gearloop.app.ui.theme.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,6 +72,13 @@ enum class ListingLayout { GRID, LIST, WIDE }
  */
 private val UNAVAILABLE_STRIP_LIFT = 18.dp
 
+/**
+ * A listing, in one of three layouts.
+ *
+ * Pass [onToggleSave] and the heart becomes a real 44 dp button that saves the
+ * listing — a write, since Milestone 03 — without opening it. Leave it out and
+ * the heart is only a picture of the saved state, as it was in the prototype.
+ */
 @Composable
 fun ListingCard(
     item: GearItem,
@@ -75,14 +86,15 @@ fun ListingCard(
     modifier: Modifier = Modifier,
     layout: ListingLayout = ListingLayout.GRID,
     showFit: Boolean = true,
+    onToggleSave: (() -> Unit)? = null,
 ) = when (layout) {
-    ListingLayout.GRID -> ListingCardGrid(item, onClick, modifier, showFit)
-    ListingLayout.LIST -> ListingCardList(item, onClick, modifier, showFit)
-    ListingLayout.WIDE -> ListingCardWide(item, onClick, modifier, showFit)
+    ListingLayout.GRID -> ListingCardGrid(item, onClick, modifier, showFit, onToggleSave)
+    ListingLayout.LIST -> ListingCardList(item, onClick, modifier, showFit, onToggleSave)
+    ListingLayout.WIDE -> ListingCardWide(item, onClick, modifier, showFit, onToggleSave)
 }
 
 @Composable
-private fun ListingCardGrid(item: GearItem, onClick: () -> Unit, modifier: Modifier, showFit: Boolean) {
+private fun ListingCardGrid(item: GearItem, onClick: () -> Unit, modifier: Modifier, showFit: Boolean, onToggleSave: (() -> Unit)?) {
     GearCard(
         modifier
             .width(185.dp)
@@ -99,7 +111,9 @@ private fun ListingCardGrid(item: GearItem, onClick: () -> Unit, modifier: Modif
             )
             SaveHeart(
                 saved = item.saved,
-                modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
+                modifier = Modifier.align(Alignment.TopEnd).padding(if (onToggleSave == null) 8.dp else 0.dp),
+                onClick = onToggleSave,
+                label = item.shortTitle,
             )
             if (!item.available && item.nextFree != null) {
                 // Clear of the tag, which hangs 13dp below the photo's bottom
@@ -152,7 +166,7 @@ private fun ListingCardGrid(item: GearItem, onClick: () -> Unit, modifier: Modif
 private val LIST_ROW_COMFORTABLE = 372.dp
 
 @Composable
-private fun ListingCardList(item: GearItem, onClick: () -> Unit, modifier: Modifier, showFit: Boolean) {
+private fun ListingCardList(item: GearItem, onClick: () -> Unit, modifier: Modifier, showFit: Boolean, onToggleSave: (() -> Unit)?) {
     GearCard(modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onClick)) {
         BoxWithConstraints {
             val tight = maxWidth < LIST_ROW_COMFORTABLE
@@ -193,7 +207,7 @@ private fun ListingCardList(item: GearItem, onClick: () -> Unit, modifier: Modif
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f),
                         )
-                        SaveHeart(item.saved)
+                        SaveHeart(item.saved, onClick = onToggleSave, label = item.shortTitle)
                     }
                     Spacer(Modifier.height(5.dp))
                     GearTag(
@@ -262,7 +276,7 @@ private fun ListingCardList(item: GearItem, onClick: () -> Unit, modifier: Modif
 
 /** The wide variant exists to break the rhythm of a long result list. */
 @Composable
-private fun ListingCardWide(item: GearItem, onClick: () -> Unit, modifier: Modifier, showFit: Boolean) {
+private fun ListingCardWide(item: GearItem, onClick: () -> Unit, modifier: Modifier, showFit: Boolean, onToggleSave: (() -> Unit)?) {
     GearCard(modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onClick)) {
         Box {
             GearImage(
@@ -272,7 +286,12 @@ private fun ListingCardWide(item: GearItem, onClick: () -> Unit, modifier: Modif
                 shape = GearShape.imageTop,
                 dimmed = !item.available,
             )
-            SaveHeart(item.saved, Modifier.align(Alignment.TopEnd).padding(10.dp))
+            SaveHeart(
+                item.saved,
+                Modifier.align(Alignment.TopEnd).padding(if (onToggleSave == null) 10.dp else 2.dp),
+                onClick = onToggleSave,
+                label = item.shortTitle,
+            )
             GearTag(
                 text = item.tagLine,
                 size = TagSize.FULL,
@@ -310,22 +329,45 @@ private fun UnavailableStrip(text: String, modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * The save heart. Drawn at [size]; when it can be tapped, the target around it is
+ * a full 44 dp, centred, so the picture stays small and the finger still lands.
+ */
 @Composable
-fun SaveHeart(saved: Boolean, modifier: Modifier = Modifier, size: Dp = 28.dp) {
-    Box(
-        modifier
-            .size(size)
-            .clip(RoundedCornerShape(999.dp))
-            .background(GearSurface.overImage.copy(alpha = 0.92f)),
-        contentAlignment = Alignment.Center,
-    ) {
-        GearIcon(
-            Lucide.Heart,
-            if (saved) "Saved" else "Save",
-            size = IconSize.s,
-            tint = if (saved) GearColor.HiVis600 else GearColor.Pine800,
-            filled = saved,
-        )
+fun SaveHeart(
+    saved: Boolean,
+    modifier: Modifier = Modifier,
+    size: Dp = 28.dp,
+    onClick: (() -> Unit)? = null,
+    label: String? = null,
+) {
+    val heart = @Composable {
+        Box(
+            Modifier
+                .size(size)
+                .clip(RoundedCornerShape(999.dp))
+                .background(GearSurface.overImage.copy(alpha = 0.92f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            GearIcon(
+                Lucide.Heart,
+                if (onClick != null) null else if (saved) "Saved" else "Save",
+                size = IconSize.s,
+                tint = if (saved) GearColor.HiVis600 else GearColor.Pine800,
+                filled = saved,
+            )
+        }
+    }
+    if (onClick == null) {
+        Box(modifier) { heart() }
+    } else {
+        Box(
+            modifier
+                .size(Metrics.tapTarget)
+                .toggleable(value = saved, role = Role.Checkbox, onValueChange = { onClick() })
+                .semantics { contentDescription = if (label != null) "Save $label" else "Save" },
+            contentAlignment = Alignment.Center,
+        ) { heart() }
     }
 }
 
@@ -365,11 +407,18 @@ fun InstantBookPill(modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * A two-party match. [proposeLabel] changes once a proposal is under way, so the
+ * card says "Continue proposal" rather than offering to start a second one, and
+ * [onHide] adds the quiet way out — "Not for me" — beside it.
+ */
 @Composable
 fun SwapCard(
     offer: SwapOffer,
     onPropose: () -> Unit,
     modifier: Modifier = Modifier,
+    proposeLabel: String = "Propose swap",
+    onHide: (() -> Unit)? = null,
 ) {
     val accent = if (offer.threeWay) GearColor.Marine500 else GearSurface.border
     GearCard(modifier.fillMaxWidth(), borderColor = accent, borderWidth = if (offer.threeWay) 1.5.dp else 1.dp) {
@@ -403,13 +452,31 @@ fun SwapCard(
                 )
             }
             Spacer(Modifier.height(Space.sm))
-            GearButton(
-                label = "Propose swap",
-                onClick = onPropose,
-                type = ButtonType.SECONDARY,
-                size = ButtonSize.M,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            if (onHide == null) {
+                GearButton(
+                    label = proposeLabel,
+                    onClick = onPropose,
+                    type = ButtonType.SECONDARY,
+                    size = ButtonSize.M,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                    GearButton(
+                        label = "Not for me",
+                        onClick = onHide,
+                        type = ButtonType.GHOST,
+                        size = ButtonSize.M,
+                    )
+                    GearButton(
+                        label = proposeLabel,
+                        onClick = onPropose,
+                        type = ButtonType.SECONDARY,
+                        size = ButtonSize.M,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
         }
     }
 }

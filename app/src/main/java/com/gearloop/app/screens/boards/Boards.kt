@@ -17,7 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.material3.Text
+import com.gearloop.app.ui.theme.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -683,8 +683,8 @@ fun ScreenMapBoard(nav: Nav) {
     GearScreen(appBar = { AppBar(title = "Screen map", onBack = { nav.back() }) }) {
         VGap(Space.s)
         Text(
-            "42 screens designed across ten areas. The design system's job is to make " +
-                "the rest buildable from the same 26 components.",
+            "${Catalogue.screens.size} screens across ${Catalogue.screens.map { it.group }.distinct().size} areas. " +
+                "The design system's job is to make the rest buildable from the same 26 components.",
             style = GearType.bodyM,
             color = GearText.secondary,
         )

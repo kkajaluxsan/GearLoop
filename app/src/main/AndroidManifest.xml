@@ -1,8 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Since 2.0.0 the app keeps its data in a local Room database. Auto Backup
+         is off so that stays true to the privacy screen: nothing the app stores
+         is copied off the phone, by the app or by the platform on its behalf. -->
     <application
-        android:allowBackup="true"
+        android:name=".GearLoopApplication"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"

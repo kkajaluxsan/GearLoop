@@ -194,6 +194,18 @@ class ContrastTest {
         // The card has to separate from the page behind it.
         check("$name · card against app background", p.surfaceCard, p.surfaceApp, 1.05)
 
+        // Buttons without a hi-vis fill. A secondary button writes its label and
+        // draws its outline in ink on chalk/000 — the brightest surface in light,
+        // the deepest in dark — and its pressed state on chalk/50. Ghost and
+        // default icon buttons write ink on the surface under them, which the
+        // surface checks at the top already hold. All three wrote pine/800 until
+        // 1.1.1, and pine/800 is a surface step in the dark palette: 1.66:1 on
+        // chalk/000, found in internal testing (QA-08) because nothing here
+        // checked a button.
+        check("$name · secondary button label on its fill", p.textPrimary, p.chalk000, TEXT)
+        check("$name · secondary button label, pressed", p.textPrimary, p.chalk50, TEXT)
+        check("$name · secondary button outline on the page", p.textPrimary, p.surfaceApp, SHAPE)
+
         report()
     }
 

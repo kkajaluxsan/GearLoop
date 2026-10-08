@@ -20,7 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Text
+import com.gearloop.app.ui.theme.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -401,6 +401,91 @@ private fun IconRowPreview() = PreviewFrame {
     IconRow(Lucide.Check, "Board", tint = GearColor.Success500)
     IconRow(Lucide.Check, "Fins ×3", tint = GearColor.Success500)
     IconRow(Lucide.X, "Wax (not included)", tint = GearColor.Chalk400, textColor = GearText.tertiary)
+}
+
+/**
+ * A small form that belongs to the screen behind it: writing a review, adding
+ * gear to the closet, typing the handover code. A dialog rather than a new
+ * route, because the screen behind it is the context — the review is of the
+ * rental on screen, the code is for the booking on screen.
+ *
+ * Elevated, because it floats; the card itself is [GearDialogCard], which is
+ * what the preview draws.
+ */
+@Composable
+fun GearDialog(
+    title: String,
+    onDismiss: () -> Unit,
+    confirmLabel: String,
+    onConfirm: () -> Unit,
+    confirmEnabled: Boolean = true,
+    dismissLabel: String = "Cancel",
+    destructiveLabel: String? = null,
+    onDestructive: (() -> Unit)? = null,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+) {
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        GearDialogCard(
+            title, onDismiss, confirmLabel, onConfirm, confirmEnabled, dismissLabel,
+            destructiveLabel, onDestructive, content,
+        )
+    }
+}
+
+@Composable
+fun GearDialogCard(
+    title: String,
+    onDismiss: () -> Unit,
+    confirmLabel: String,
+    onConfirm: () -> Unit,
+    confirmEnabled: Boolean = true,
+    dismissLabel: String = "Cancel",
+    destructiveLabel: String? = null,
+    onDestructive: (() -> Unit)? = null,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .shadow(Elevation.lg, GearShape.lg, spotColor = GearColor.Pine900)
+            .clip(GearShape.lg)
+            .background(GearSurface.card)
+            .padding(Space.l),
+    ) {
+        Text(title, style = GearType.headingL, color = GearText.primary)
+        Spacer(Modifier.height(Space.m))
+        content()
+        Spacer(Modifier.height(Space.l))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(Space.s),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (destructiveLabel != null && onDestructive != null) {
+                GearButton(destructiveLabel, onDestructive, type = ButtonType.DANGER, size = ButtonSize.M)
+            }
+            Spacer(Modifier.weight(1f))
+            GearButton(dismissLabel, onDismiss, type = ButtonType.GHOST, size = ButtonSize.M)
+            GearButton(confirmLabel, onConfirm, size = ButtonSize.M, enabled = confirmEnabled)
+        }
+    }
+}
+
+@GearTypePreview
+@Composable
+private fun DialogCardPreview() = PreviewFrame {
+    GearDialogCard(
+        title = "Rate Kavitha",
+        onDismiss = {},
+        confirmLabel = "Post review",
+        onConfirm = {},
+        destructiveLabel = "Delete",
+        onDestructive = {},
+    ) {
+        StarPicker(4, {})
+        Spacer(Modifier.height(Space.s))
+        GearTextField("Board was exactly as described.", label = "Your review", onValueChange = {}, singleLine = false)
+    }
 }
 
 /**

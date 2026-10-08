@@ -1,5 +1,6 @@
 package com.gearloop.app.screens.discovery
 
+import android.content.Intent
 import com.gearloop.app.ui.theme.Border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -22,34 +23,46 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Text
+import com.gearloop.app.ui.theme.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
-import com.gearloop.app.data.Demo
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.gearloop.app.data.Availability
 import com.gearloop.app.data.FitLogic
-import com.gearloop.app.data.grouped
+import com.gearloop.app.data.GearItem
+import com.gearloop.app.data.Pricing
+import com.gearloop.app.data.dateRange
 import com.gearloop.app.data.kmAway
 import com.gearloop.app.data.lkr
+import com.gearloop.app.data.repo.MoneyRepository
+import com.gearloop.app.data.repo.Seed
 import com.gearloop.app.nav.Nav
 import com.gearloop.app.ui.components.*
 import com.gearloop.app.ui.icons.GearIcon
 import com.gearloop.app.ui.icons.IconSize
 import com.gearloop.app.ui.icons.Lucide
-import com.gearloop.app.ui.icons.LucideIcon
 import com.gearloop.app.ui.theme.GearColor
 import com.gearloop.app.ui.theme.GearShape
 import com.gearloop.app.ui.theme.GearSurface
 import com.gearloop.app.ui.theme.GearText
 import com.gearloop.app.ui.theme.GearType
 import com.gearloop.app.ui.theme.Space
+import com.gearloop.app.ui.vm.FitDiscoveryViewModel
+import com.gearloop.app.ui.vm.gearViewModel
+import kotlinx.coroutines.launch
 
 /* ------------------------------------------------------------------ S-07 */
 
@@ -59,20 +72,56 @@ import com.gearloop.app.ui.theme.Space
  * Everything a person needs to trust an object they have never seen, in the
  * order they need it: what it is, whether it fits them, what it costs, what
  * condition it is actually in, who has it, and what happens if it goes wrong.
+ *
+ * Milestone 03 · Read the listing that was opened — any listing, not only the
+ * Torq — with its live fit verdict and its own condition record; Update its
+ * saved state; Create the booking draft that the next four screens edit.
  */
 @Composable
 fun S07ListingDetail(nav: Nav) {
-    val item = Demo.torq
-    var saved by rememberSaveable { mutableStateOf(false) }
+    val vm: FitDiscoveryViewModel = gearViewModel()
+    val selected by vm.selected.collectAsStateWithLifecycle()
+    val profile by vm.profile.collectAsStateWithLifecycle()
+    val draft by vm.draft.collectAsStateWithLifecycle()
+    val reviews by vm.reviews.collectAsStateWithLifecycle()
+    val item = selected ?: return
+
+    // A booking already under way shows its own dates; otherwise the default
+    // the draft would start with, so the figure here is the one S-08 opens on.
+    val span = draft?.takeIf { it.item.id == item.id }?.span ?: vm.defaultSpan(item)
+    val days = Availability.daysIn(span)
+    val quote = Pricing.quote(item, days, com.gearloop.app.data.Protection.PLUS, couponEligible = false)
+
+    val scroll = rememberSavedScrollState()
+    val scope = rememberCoroutineScope()
+    // Layout position, not screen state: re-measured on every frame it changes.
+    var conditionY by remember { mutableIntStateOf(0) }
+    // Opening a similar listing from the bottom of this one starts at its top.
+    LaunchedEffect(item.id) { if (scroll.value > 0) scroll.scrollTo(0) }
+
+    val context = LocalContext.current
+    val share = {
+        val text = "${item.title} on GearLoop · ${lkr(item.pricePerDay)} a day · ${item.code}"
+        context.startActivity(
+            Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text), "Share listing"),
+        )
+    }
+    val ownerFirst = item.owner.name.substringBefore(' ')
 
     Column(Modifier.fillMaxSize().background(GearSurface.app)) {
         Column(
             Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .verticalScroll(rememberSavedScrollState()),
+                .verticalScroll(scroll),
         ) {
-            HeroCarousel(item.photos, saved, onSave = { saved = !saved }, nav = nav)
+            HeroCarousel(
+                item = item,
+                onSave = { vm.toggleSaved(item) },
+                onShare = share,
+                onConditionPhotos = { scope.launch { scroll.animateScrollTo(conditionY) } },
+                nav = nav,
+            )
 
             Column(Modifier.padding(horizontal = Space.screen)) {
                 // The tag hangs over the bottom edge of the hero.
@@ -91,13 +140,16 @@ fun S07ListingDetail(nav: Nav) {
                 }
 
                 VGap(Space.m)
+                // The reason in the rider's own units (FR-03), worked out from the
+                // profile S-02 saved — so it changes when the profile does.
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     FitStamp(item.fit)
                     Spacer(Modifier.width(Space.sm))
                     Text(
-                        FitLogic.fitExplanation(42, Demo.WEIGHT_KG),
+                        FitLogic.reason(item, profile?.heightCm, profile?.weightKg),
                         style = GearType.bodyS,
                         color = GearText.secondary,
+                        modifier = Modifier.weight(1f),
                     )
                 }
 
@@ -119,6 +171,14 @@ fun S07ListingDetail(nav: Nav) {
                         }
                     }
                 }
+                if (!item.available && item.nextFree != null) {
+                    VGap(Space.s)
+                    Text(
+                        "Out on a rental today · ${item.nextFree}",
+                        style = GearType.dataS,
+                        color = GearText.secondary,
+                    )
+                }
 
                 VGap(Space.l)
                 GearDivider()
@@ -127,15 +187,18 @@ fun S07ListingDetail(nav: Nav) {
                 // --- dates -------------------------------------------------
                 SelectRow(
                     label = "Your dates",
-                    value = "${Demo.BOOKING_DATES} · ${Demo.BOOKING_DAYS} days",
-                    onClick = { nav.to("s08") },
-                    supporting = "${Demo.BOOKING_DAYS}-day discount applied · " +
-                        "save ${lkr(Demo.DURATION_DISCOUNT)}",
+                    value = "${dateRange(span.start, span.end)} · $days ${if (days == 1) "day" else "days"}",
+                    onClick = { vm.startBooking(item) { nav.to("s08") } },
+                    supporting = if (quote.durationDiscount > 0) {
+                        "$days-day discount applied · save ${lkr(quote.durationDiscount)}"
+                    } else {
+                        "Book 3 days or more for 10% off"
+                    },
                     leadingIcon = Lucide.Calendar,
                 )
 
                 Section("What's included")
-                Demo.torqIncluded.chunked(2).forEach { pair ->
+                item.included.chunked(2).forEach { pair ->
                     Row(Modifier.fillMaxWidth()) {
                         pair.forEach { label ->
                             IconRow(
@@ -149,7 +212,7 @@ fun S07ListingDetail(nav: Nav) {
                     }
                     VGap(Space.s)
                 }
-                Demo.torqExcluded.forEach {
+                item.excluded.forEach {
                     IconRow(
                         icon = Lucide.X,
                         text = it,
@@ -158,52 +221,66 @@ fun S07ListingDetail(nav: Nav) {
                         strikethrough = true,
                     )
                 }
+                item.extras.forEach { extra ->
+                    VGap(Space.s)
+                    IconRow(
+                        icon = Lucide.Plus,
+                        text = "${extra.name} · ${lkr(extra.perDay)} a day, added at checkout",
+                        tint = GearColor.Marine500,
+                    )
+                }
 
-                Section("Specifications")
-                Demo.torqSpecs.forEach { spec ->
-                    Row(
-                        Modifier.fillMaxWidth().padding(vertical = 7.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(spec.label, style = GearType.bodyS, color = GearText.secondary)
-                        if (spec.fitRelevant) {
-                            Spacer(Modifier.width(6.dp))
-                            Box(Modifier.size(6.dp).clip(CircleShape).background(GearColor.HiVis500))
+                if (item.specs.isNotEmpty()) {
+                    Section("Specifications")
+                    item.specs.forEach { spec ->
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(spec.label, style = GearType.bodyS, color = GearText.secondary)
+                            if (spec.fitRelevant) {
+                                Spacer(Modifier.width(6.dp))
+                                Box(Modifier.size(6.dp).clip(CircleShape).background(GearColor.HiVis500))
+                            }
+                            Spacer(Modifier.weight(1f))
+                            Text(spec.value, style = GearType.dataM, color = GearText.primary)
                         }
-                        Spacer(Modifier.weight(1f))
-                        Text(spec.value, style = GearType.dataM, color = GearText.primary)
+                    }
+                    if (item.specs.any { it.fitRelevant }) {
+                        VGap(6.dp)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(6.dp).clip(CircleShape).background(GearColor.HiVis500))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Affects how it fits you", style = GearType.bodyS, color = GearText.tertiary)
+                        }
                     }
                 }
-                VGap(6.dp)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(6.dp).clip(CircleShape).background(GearColor.HiVis500))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Affects how it fits you", style = GearType.bodyS, color = GearText.tertiary)
+
+                Column(Modifier.onGloballyPositioned { conditionY = it.positionInParent().y.toInt() }) {
+                    Section("Condition")
+                    ConditionBlock(item)
                 }
 
-                Section("Condition")
-                ConditionBlock()
-
                 Section("Handover")
-                HandoverBlock()
+                HandoverBlock(item)
 
                 Section("Protection & deposit")
                 Banner(
                     text = "${lkr(item.deposit)} deposit is a hold on your card, not a charge. " +
-                        "Released within 24 h of return.",
+                        "Released within 24 h of return. Plus or Pro protection replaces it.",
                     kind = BannerKind.SAFETY,
                     action = "Compare protection plans",
-                    onAction = { nav.to("s09") },
+                    onAction = { vm.startBooking(item) { nav.to("s09") } },
                 )
 
                 VGap(Space.l)
                 GearDivider()
                 VGap(Space.l)
-                OwnerStrip(item.owner, onClick = { nav.to("s37") })
+                OwnerStrip(item.owner, onClick = { vm.showProfile(item.owner.handle); nav.to("s37") })
                 VGap(Space.sm)
                 GearButton(
-                    "Message Kavitha",
-                    { nav.to("s33") },
+                    "Message $ownerFirst",
+                    { vm.openThread(item.owner.handle); nav.to("s33") },
                     Modifier.fillMaxWidth(),
                     type = ButtonType.SECONDARY,
                     size = ButtonSize.M,
@@ -211,10 +288,12 @@ fun S07ListingDetail(nav: Nav) {
                 )
 
                 Section("Reviews")
-                ReviewsBlock(nav)
+                // Reviews of this listing's owner. An owner's review of a renter is
+                // filed against the same listing, and it was showing up here (D-27).
+                ReviewsBlock(item, reviews.filter { it.listingId == item.id && it.subject.handle == item.owner.handle }.map { it.entry }, nav)
 
                 Section("House rules & cancellation")
-                Demo.houseRules.forEach { (title, body) ->
+                houseRules(item).forEach { (title, body) ->
                     Column(Modifier.padding(bottom = Space.sm)) {
                         Text(title, style = GearType.labelL, color = GearText.primary)
                         VGap(2.dp)
@@ -223,40 +302,69 @@ fun S07ListingDetail(nav: Nav) {
                 }
             }
 
-            Section2("Similar boards")
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberSavedScrollState())
-                    .padding(horizontal = Space.screen),
-                horizontalArrangement = Arrangement.spacedBy(Space.sm),
-            ) {
-                listOf(Demo.nspSup, Demo.wetsuit, Demo.kayak, Demo.trekMarlin).forEach {
-                    ListingCard(it, { }, layout = ListingLayout.GRID)
+            val similar = vm.similarTo(item)
+            if (similar.isNotEmpty()) {
+                Section2("Similar gear")
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberSavedScrollState())
+                        .padding(horizontal = Space.screen),
+                    horizontalArrangement = Arrangement.spacedBy(Space.sm),
+                ) {
+                    similar.forEach {
+                        ListingCard(
+                            it,
+                            { vm.select(it) },
+                            layout = ListingLayout.GRID,
+                            onToggleSave = { vm.toggleSaved(it) },
+                        )
+                    }
                 }
             }
             VGap(Space.section)
         }
 
         StickyFooter(
-            priceValue = lkr(Demo.LISTING_FOOTER_TOTAL),
+            priceValue = lkr(Pricing.listingFooter(item, days)),
             // Not "all in": no extras have been picked and no coupon applied on
             // this screen, so the checkout total is a different — lower —
             // number. Saying "all in" here and then charging something else is
             // the exact thing the price breakdown on S-11 exists to avoid.
-            priceCaption = "${Demo.BOOKING_DAYS} days, before extras",
+            priceCaption = "$days ${if (days == 1) "day" else "days"}, before extras",
         ) {
-            GearButton("Book instantly", { nav.to("s08") }, size = ButtonSize.M, icon = Lucide.Zap)
+            GearButton(
+                if (item.instantBook) "Book instantly" else "Request to book",
+                { vm.startBooking(item) { nav.to("s08") } },
+                size = ButtonSize.M,
+                icon = if (item.instantBook) Lucide.Zap else Lucide.Send,
+            )
         }
     }
 }
 
+/** The rules a renter agrees to: the cancellation policy, and what the gear needs. */
+private fun houseRules(item: GearItem): List<Pair<String, String>> = buildList {
+    add("Cancellation" to MoneyRepository.CANCELLATION_RULE)
+    if (item.sport in setOf("Surfing", "SUP", "Kayaking")) {
+        add("Rinse with fresh water" to "Salt kills fin boxes and fittings. There's a tap at the pickup point.")
+    }
+    add("No commercial use" to "Personal use only — teaching or guiding for payment needs a different plan.")
+}
+
 @Composable
-private fun HeroCarousel(photos: List<Int>, saved: Boolean, onSave: () -> Unit, nav: Nav) {
+private fun HeroCarousel(
+    item: GearItem,
+    onSave: () -> Unit,
+    onShare: () -> Unit,
+    onConditionPhotos: () -> Unit,
+    nav: Nav,
+) {
+    val photos = item.photos
     val pager = rememberPagerState(pageCount = { photos.size })
     Box(Modifier.fillMaxWidth().height(300.dp)) {
         HorizontalPager(state = pager, modifier = Modifier.fillMaxSize()) { page ->
-            GearImage(photos[page], "Torq Mod Fish photo ${page + 1}", Modifier.fillMaxSize())
+            GearImage(photos[page], "${item.shortTitle} photo ${page + 1}", Modifier.fillMaxSize(), dimmed = !item.available)
         }
 
         // Floating transparent app bar over the hero.
@@ -269,15 +377,15 @@ private fun HeroCarousel(photos: List<Int>, saved: Boolean, onSave: () -> Unit, 
         ) {
             GearIconButton(Lucide.ChevronLeft, "Back", { nav.back() }, tone = IconButtonTone.ON_IMAGE, iconSize = IconSize.l)
             Spacer(Modifier.weight(1f))
-            GearIconButton(Lucide.Share2, "Share", { }, tone = IconButtonTone.ON_IMAGE)
+            GearIconButton(Lucide.Share2, "Share", onShare, tone = IconButtonTone.ON_IMAGE)
             Spacer(Modifier.width(6.dp))
             GearIconButton(
                 icon = Lucide.Heart,
-                contentDescription = if (saved) "Saved" else "Save",
+                contentDescription = if (item.saved) "Saved" else "Save",
                 onClick = onSave,
                 tone = IconButtonTone.ON_IMAGE,
-                tint = if (saved) GearColor.HiVis600 else GearColor.Pine800,
-                filled = saved,
+                tint = if (item.saved) GearColor.HiVis600 else GearColor.Pine800,
+                filled = item.saved,
             )
         }
 
@@ -292,7 +400,7 @@ private fun HeroCarousel(photos: List<Int>, saved: Boolean, onSave: () -> Unit, 
                 text = "Condition photos",
                 fill = GearSurface.overImage.copy(alpha = 0.92f),
                 textColor = GearColor.Pine900,
-                modifier = Modifier.clickable { },
+                modifier = Modifier.clickable(role = Role.Button, onClick = onConditionPhotos),
             )
         }
 
@@ -315,7 +423,7 @@ private fun HeroCarousel(photos: List<Int>, saved: Boolean, onSave: () -> Unit, 
 }
 
 @Composable
-private fun ConditionBlock() {
+private fun ConditionBlock(item: GearItem) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(
             Modifier
@@ -324,37 +432,43 @@ private fun ConditionBlock() {
                 .border(Border.heavy, GearColor.Pine800, GearShape.sm),
             contentAlignment = Alignment.Center,
         ) {
-            Text(Demo.torq.grade.letter, style = GearType.displayXl, color = GearColor.Pine900)
+            Text(item.grade.letter, style = GearType.displayXl, color = GearColor.Pine900)
         }
         Spacer(Modifier.width(Space.sm))
         Text(
-            Demo.torq.grade.summary,
+            item.grade.summary,
             style = GearType.bodyM,
             color = GearText.body,
             modifier = Modifier.weight(1f),
         )
     }
     VGap(Space.m)
-    Eyebrow("Condition photos · 12 Jul 2026")
+    Eyebrow("Condition photos · ${item.conditionDate}")
     VGap(Space.s)
     Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-        Demo.torqConditionPhotos.forEach {
+        item.conditionPhotos.take(3).forEach {
             GearImage(it, "Condition photo", Modifier.weight(1f).height(88.dp), GearShape.sm)
         }
+        repeat(3 - item.conditionPhotos.take(3).size) { Spacer(Modifier.weight(1f)) }
     }
     VGap(Space.s)
-    Text("Used 47 days · last serviced 2 Jul", style = GearType.dataM, color = GearText.tertiary)
+    Text(item.conditionNote, style = GearType.dataM, color = GearText.tertiary)
 }
 
 @Composable
-private fun HandoverBlock() {
+private fun HandoverBlock(item: GearItem) {
     // A radius, not a pin — the exact address is not public before booking.
     MapThumb(
         modifier = Modifier.fillMaxWidth().height(140.dp),
         caption = "Exact address shared once booked",
     )
     VGap(Space.sm)
-    Demo.handoverMethods.forEach { (name, detail, price) ->
+    val area = item.owner.area.substringBefore(',')
+    buildList {
+        add(Triple("Self pickup", "$area · meet the owner", "Free"))
+        if (item.delivery) add(Triple("Delivery", "Within 5 km of $area", lkr(600)))
+        if (item.owner.handle == Seed.OWNER) add(Triple("GearPoint Nallur", "Collect any time 08:00–20:00", lkr(200)))
+    }.forEach { (name, detail, price) ->
         Row(
             Modifier.fillMaxWidth().padding(vertical = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -401,23 +515,31 @@ fun MapThumb(
 }
 
 @Composable
-private fun ReviewsBlock(nav: Nav) {
+private fun ReviewsBlock(item: GearItem, reviews: List<com.gearloop.app.data.ReviewEntry>, nav: Nav) {
+    val owner = item.owner
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("★ ${Demo.kavitha.ratingText}", style = GearType.dataL, color = GearText.primary)
+        Text("★ ${owner.ratingText}", style = GearType.dataL, color = GearText.primary)
         Spacer(Modifier.width(Space.s))
-        Text("${Demo.kavitha.reviews} reviews", style = GearType.bodyM, color = GearText.secondary)
+        Text("${owner.reviews} reviews of ${owner.name.substringBefore(' ')}", style = GearType.bodyM, color = GearText.secondary)
+    }
+    // The category breakdown exists for the one host the dataset measured it for.
+    if (owner.handle == Seed.OWNER) {
+        VGap(Space.sm)
+        com.gearloop.app.data.Demo.subRatings.forEach { (label, value) ->
+            RatingBar(label, value / 5f, Modifier.padding(vertical = 4.dp), value = String.format("%.2f", value))
+        }
     }
     VGap(Space.sm)
-    Demo.subRatings.forEach { (label, value) ->
-        RatingBar(label, value / 5f, Modifier.padding(vertical = 4.dp), value = String.format("%.2f", value))
+    if (reviews.isEmpty()) {
+        Text("No written reviews for this item yet.", style = GearType.bodyS, color = GearText.tertiary)
+        VGap(Space.sm)
     }
-    VGap(Space.sm)
-    Demo.torqReviews.take(2).forEach {
+    reviews.take(2).forEach {
         ReviewCard(it)
         VGap(Space.sm)
     }
     GearButton(
-        "See all ${Demo.kavitha.reviews} reviews",
+        if (reviews.size > 2) "See all ${reviews.size} reviews" else "Reviews and ratings",
         { nav.to("s42") },
         Modifier.fillMaxWidth(),
         type = ButtonType.GHOST,
