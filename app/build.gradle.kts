@@ -39,8 +39,10 @@ android {
         // 4 / 2.0.0 is Milestone 03: the same screens, now backed by a Room
         // database, so every interface creates, reads, updates or deletes
         // something real instead of rendering a fixed dataset.
-        versionCode = 4
-        versionName = "2.0.0"
+        // 5 / 3.0.0 is the live app: accounts, per-member data, the real
+        // clock, the camera, and no presentation shell.
+        versionCode = 5
+        versionName = "3.0.0"
         vectorDrawables { useSupportLibrary = true }
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -136,6 +138,15 @@ dependencies {
     ksp(libs.androidx.room.compiler)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
+
+    // Splash screen on every API level, the in-app camera (condition photos,
+    // listing photos, gear-tag scanning) and QR codes for the gear tags.
+    implementation(libs.androidx.core.splashscreen)
+    implementation(libs.androidx.camera.core)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
+    implementation(libs.zxing.core)
 
     // The pure logic — fit, pricing, availability, search — is tested on the
     // JVM. The database and the screens are tested on a device, because that is

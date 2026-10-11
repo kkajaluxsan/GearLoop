@@ -1,5 +1,9 @@
 package com.gearloop.app.ui.components
 
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -115,8 +119,13 @@ fun GearTextField(
     keyboardType: KeyboardType = KeyboardType.Text,
     imeAction: ImeAction = ImeAction.Done,
     onImeAction: (() -> Unit)? = null,
+    /** Mask the text, with a button to show it — for passwords. */
+    password: Boolean = false,
+    /** How the text is drawn, without changing what is typed — card-number groups, MM/YY. */
+    visualTransformation: VisualTransformation = VisualTransformation.None,
 ) {
     val editable = onValueChange != null && state != FieldState.DISABLED
+    var revealed by rememberSaveable { mutableStateOf(false) }
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
     val borderColor = when {
@@ -164,8 +173,13 @@ fun GearTextField(
                         singleLine = singleLine,
                         textStyle = GearType.bodyM.copy(color = GearText.primary),
                         cursorBrush = SolidColor(GearColor.Pine800),
-                        keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = imeAction),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = if (password) KeyboardType.Password else keyboardType,
+                            imeAction = imeAction,
+                            autoCorrectEnabled = !password && keyboardType == KeyboardType.Text,
+                        ),
                         keyboardActions = KeyboardActions(onAny = { onImeAction?.invoke() }),
+                        visualTransformation = if (password && !revealed) PasswordVisualTransformation() else visualTransformation,
                         interactionSource = interaction,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -184,6 +198,18 @@ fun GearTextField(
                 )
             }
             if (suffix != null) Text(suffix, style = GearType.dataM, color = GearText.tertiary)
+            if (password && editable) {
+                Box(
+                    Modifier
+                        .size(Metrics.tapTarget)
+                        .clip(GearShape.full)
+                        .toggleable(value = revealed, role = Role.Switch) { revealed = it }
+                        .semantics { contentDescription = if (revealed) "Hide password" else "Show password" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    GearIcon(if (revealed) Lucide.EyeOff else Lucide.Eye, null, size = IconSize.m, tint = GearColor.Chalk500)
+                }
+            }
             if (trailingIcon != null) GearIcon(trailingIcon, null, size = IconSize.m, tint = GearColor.Chalk500)
             // A caret, so a focused field reads as focused in a static mock.
             if (state == FieldState.FOCUS) {
@@ -892,5 +918,45 @@ private fun DateRangeCellStatesPreview() = PreviewFrame {
         DayState.entries.forEachIndexed { i, state ->
             DateRangeCell("${i + 8}", state)
         }
+    }
+}
+
+/**
+ * Shows what was typed in capitals, as a code is printed. Changing the value
+ * itself in onValueChange fights the keyboard's composing text and drops
+ * characters, so the capitals are only drawn; the reader upper-cases.
+ */
+object UppercaseTransformation : VisualTransformation {
+    override fun filter(text: androidx.compose.ui.text.AnnotatedString): androidx.compose.ui.text.input.TransformedText =
+        androidx.compose.ui.text.input.TransformedText(
+            androidx.compose.ui.text.AnnotatedString(text.text.uppercase()),
+            androidx.compose.ui.text.input.OffsetMapping.Identity,
+        )
+}
+
+/** Draws a run of digits in groups of four, as a card number is printed. */
+object CardNumberTransformation : VisualTransformation {
+    override fun filter(text: androidx.compose.ui.text.AnnotatedString): androidx.compose.ui.text.input.TransformedText {
+        val digits = text.text
+        val out = digits.chunked(4).joinToString(" ")
+        val mapping = object : androidx.compose.ui.text.input.OffsetMapping {
+            // A space follows every fourth digit except the last group.
+            override fun originalToTransformed(offset: Int): Int = if (offset <= 0) 0 else offset + (offset - 1) / 4
+            override fun transformedToOriginal(offset: Int): Int = (offset - offset / 5).coerceIn(0, digits.length)
+        }
+        return androidx.compose.ui.text.input.TransformedText(androidx.compose.ui.text.AnnotatedString(out), mapping)
+    }
+}
+
+/** Draws four digits as MM/YY. */
+object ExpiryTransformation : VisualTransformation {
+    override fun filter(text: androidx.compose.ui.text.AnnotatedString): androidx.compose.ui.text.input.TransformedText {
+        val digits = text.text
+        val out = if (digits.length > 2) digits.take(2) + "/" + digits.drop(2) else digits
+        val mapping = object : androidx.compose.ui.text.input.OffsetMapping {
+            override fun originalToTransformed(offset: Int): Int = if (offset > 2 && digits.length > 2) offset + 1 else offset
+            override fun transformedToOriginal(offset: Int): Int = if (offset > 2 && digits.length > 2) offset - 1 else offset.coerceAtMost(digits.length)
+        }
+        return androidx.compose.ui.text.input.TransformedText(androidx.compose.ui.text.AnnotatedString(out), mapping)
     }
 }

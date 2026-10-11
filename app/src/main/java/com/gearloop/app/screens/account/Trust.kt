@@ -37,10 +37,14 @@ import com.gearloop.app.R
 import com.gearloop.app.data.Demo
 import com.gearloop.app.data.TrustTier
 import com.gearloop.app.data.VerificationStep
-import com.gearloop.app.data.repo.EvidenceRepository
-import com.gearloop.app.data.repo.Seed
 import com.gearloop.app.data.ListingStatus
 import com.gearloop.app.nav.Nav
+import com.gearloop.app.nav.Routes
+import com.gearloop.app.container
+import com.gearloop.app.data.repo.EvidenceRepository
+import com.gearloop.app.data.lkr
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import com.gearloop.app.screens.MainTab
 import com.gearloop.app.screens.MainTabBar
 import com.gearloop.app.ui.components.*
@@ -60,12 +64,9 @@ import com.gearloop.app.ui.vm.gearViewModel
 /* ------------------------------------------------------------------ S-32 */
 
 /**
- * S-32 · Read the trust score and what it is made of — recomputed from the
- * verification steps, completed rentals and upheld claims rather than typed —
- * and the badges; Update which earned badges show on the public profile.
- *
- * Identity and reputation stay separate facts on this screen (FR-07): the score
- * is never shown on its own as if it were enough.
+ * The Profile tab: who you are, everything that is yours, and your trust score
+ * — recomputed from the verification steps, completed rentals and upheld
+ * claims rather than typed. Identity and reputation stay separate facts (FR-07).
  */
 @Composable
 fun S32TrustProfile(nav: Nav) {
@@ -73,24 +74,95 @@ fun S32TrustProfile(nav: Nav) {
     val trust by vm.trust.collectAsStateWithLifecycle()
     val badges by vm.badges.collectAsStateWithLifecycle()
     val steps by vm.verification.collectAsStateWithLifecycle()
+    val account by vm.account.collectAsStateWithLifecycle()
+    val profile by vm.profile.collectAsStateWithLifecycle()
+    val app = androidx.compose.ui.platform.LocalContext.current.container
+    val unread by app.discovery.unreadNotifications.collectAsStateWithLifecycle()
+    val requests by app.exchange.requests.collectAsStateWithLifecycle()
     val addressDone = steps.any { it.isHomeAddress && it.state == VerificationStep.State.DONE }
+    val me = account?.person
 
     GearScreen(
         appBar = {
             AppBar(
-                title = "Trust",
-                actions = { GearIconButton(Lucide.Settings, "Verification settings", { nav.to("s41") }, size = 44.dp) },
+                title = "Profile",
+                actions = { GearIconButton(Lucide.Settings, "Settings", { nav.to(Routes.SETTINGS) }, size = 44.dp) },
             )
         },
         tabBar = { MainTabBar(nav, MainTab.PROFILE) },
     ) {
+        VGap(Space.s)
+        if (me != null) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Avatar(me, size = 64.dp, showTierRing = true)
+                Spacer(Modifier.width(Space.sm))
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                        Text(me.name, style = GearType.headingL, color = GearText.primary)
+                        TrustBadge(me.copy(tier = trust.tier))
+                    }
+                    Text(account?.email.orEmpty(), style = GearType.bodyS, color = GearText.secondary)
+                    Text("Member since ${me.memberSince}${if (me.area.isNotBlank()) " · ${me.area}" else ""}", style = GearType.bodyS, color = GearText.tertiary)
+                }
+            }
+            VGap(Space.m)
+            Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                StatTile(lkr(profile?.walletAvailable ?: 0), "Wallet", Modifier.weight(1f).clickable(role = Role.Button) { nav.to("s35") })
+                StatTile("${trust.score}", "Trust", Modifier.weight(1f))
+                StatTile(if (me.reviews > 0) "★ ${me.ratingText}" else "New", "Rating", Modifier.weight(1f))
+            }
+        }
+
+        // A renter is waiting on the answer, so an owner with a request gets it at
+        // the top of their profile, a tap away, not three screens down.
+        if (requests.isNotEmpty()) {
+            VGap(Space.l)
+            Banner(
+                title = if (requests.size == 1) "1 booking request is waiting" else "${requests.size} booking requests are waiting",
+                text = "Answer each within 24 hours of asking.",
+                kind = BannerKind.WARNING,
+                action = "See requests",
+                onAction = { nav.to("s28") },
+            )
+        }
+
+        VGap(Space.l)
+        listOf(
+            Triple(Lucide.Wallet, "Wallet and payments", "s35"),
+            Triple(Lucide.Store, "Lend your gear", "s24"),
+            Triple(Lucide.Tags, "Your listings", Routes.MY_LISTINGS),
+            Triple(Lucide.Boxes, "Gear closet", "s36"),
+            Triple(Lucide.Heart, "Saved gear", Routes.SAVED),
+            Triple(Lucide.Bell, if (unread > 0) "Notifications ($unread new)" else "Notifications", "s38"),
+            Triple(Lucide.Ruler, "Fit profile and sports", "s02"),
+            Triple(Lucide.BadgeCheck, "Verification", "s41"),
+            Triple(Lucide.CircleUser, "Your public profile", "s37"),
+        ).plus(if (account?.isAdmin == true) listOf(Triple(Lucide.Scale, "Claims desk", "s40")) else emptyList())
+            .forEach { (icon, label, route) ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable(role = Role.Button) {
+                            // Your own public profile, as other members see it.
+                            if (route == "s37" && me != null) vm.showProfile(me.handle)
+                            nav.to(route)
+                        }
+                        .padding(vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    GearIcon(icon, null, size = IconSize.m, tint = GearText.primary)
+                    Spacer(Modifier.width(Space.sm))
+                    Text(label, style = GearType.labelL, color = GearText.primary, modifier = Modifier.weight(1f))
+                    GearIcon(Lucide.ChevronRight, null, size = IconSize.s, tint = GearColor.Chalk400)
+                }
+                GearDivider()
+            }
+
+        VGap(Space.l)
+        Eyebrow("Your trust score")
         VGap(Space.m)
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-            ProgressRing(
-                progress = trust.score / 1000f,
-                size = 160.dp,
-                color = GearColor.Pine800,
-            ) {
+            ProgressRing(progress = trust.score / 1000f, size = 160.dp, color = GearColor.Pine800) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("${trust.score}", style = GearType.dataXl, color = GearText.primary)
                     // The tier, in the tier's own ink — never in hi-vis.
@@ -104,20 +176,8 @@ fun S32TrustProfile(nav: Nav) {
                 color = GearText.secondary,
             )
             VGap(Space.s)
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(8.dp)
-                    .clip(GearShape.full)
-                    .background(GearColor.Chalk200),
-            ) {
-                Box(
-                    Modifier
-                        .fillMaxWidth(trust.progress)
-                        .height(8.dp)
-                        .clip(GearShape.full)
-                        .background(GearColor.HiVis500)
-                )
+            Box(Modifier.fillMaxWidth().height(8.dp).clip(GearShape.full).background(GearColor.Chalk200)) {
+                Box(Modifier.fillMaxWidth(trust.progress).height(8.dp).clip(GearShape.full).background(GearColor.HiVis500))
             }
         }
 
@@ -125,16 +185,11 @@ fun S32TrustProfile(nav: Nav) {
         Eyebrow("What makes up your score")
         VGap(Space.s)
         trust.factors.forEach { factor ->
-            RatingBar(
-                label = factor.label,
-                fraction = factor.progress,
-                modifier = Modifier.padding(vertical = 5.dp),
-                value = factor.value,
-            )
+            RatingBar(label = factor.label, fraction = factor.progress, modifier = Modifier.padding(vertical = 5.dp), value = factor.value)
         }
         VGap(Space.s)
         Text(
-            "Each verification step adds ${30} points and each completed rental ${6}. A damage claim upheld against you takes 40 off.",
+            "+30 for each verification step, +6 for each rental, −40 for an upheld claim.",
             style = GearType.bodyS,
             color = GearText.tertiary,
         )
@@ -155,7 +210,7 @@ fun S32TrustProfile(nav: Nav) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Eyebrow("Badges")
             Spacer(Modifier.weight(1f))
-            Text("Tap an earned badge to show it on your profile", style = GearType.bodyS, color = GearText.tertiary)
+            Text("Tap one to show it on your profile", style = GearType.bodyS, color = GearText.tertiary)
         }
         VGap(Space.s)
         FlowRow(
@@ -196,11 +251,7 @@ fun S32TrustProfile(nav: Nav) {
                             null, size = IconSize.s,
                             tint = if (badge.earned) GearColor.Pine900 else GearColor.Chalk400,
                         )
-                        Text(
-                            badge.name,
-                            style = GearType.labelM,
-                            color = if (badge.earned) GearColor.Pine900 else GearColor.Chalk400,
-                        )
+                        Text(badge.name, style = GearType.labelM, color = if (badge.earned) GearColor.Pine900 else GearColor.Chalk400)
                     }
                 }
             }
@@ -208,43 +259,7 @@ fun S32TrustProfile(nav: Nav) {
 
         if (!addressDone) {
             VGap(Space.l)
-            GearButton("Verify your address", { nav.to("s41") }, Modifier.fillMaxWidth(), icon = Lucide.House)
-            VGap(Space.s)
-            Text(
-                "The one thing left. It unlocks delivery and lets you list your own gear.",
-                style = GearType.bodyS,
-                color = GearText.tertiary,
-            )
-        }
-
-        VGap(Space.l)
-        GearDivider()
-        VGap(Space.s)
-        listOf(
-            Triple(Lucide.Wallet, "Wallet & deposits", "s35"),
-            Triple(Lucide.Boxes, "Gear closet", "s36"),
-            Triple(Lucide.Bell, "Notifications", "s38"),
-            Triple(Lucide.ChartColumn, "Owner dashboard (Kavitha)", "s24"),
-            Triple(Lucide.BadgeCheck, "Verification", "s41"),
-            Triple(Lucide.CircleUser, "Your public profile", "s37"),
-        ).forEach { (icon, label, route) ->
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clickable(role = Role.Button) {
-                        // Your own public profile, as other members see it.
-                        if (route == "s37") vm.showProfile(Seed.ME)
-                        nav.to(route)
-                    }
-                    .padding(vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                GearIcon(icon, null, size = IconSize.m, tint = GearText.primary)
-                Spacer(Modifier.width(Space.sm))
-                Text(label, style = GearType.labelL, color = GearText.primary, modifier = Modifier.weight(1f))
-                GearIcon(Lucide.ChevronRight, null, size = IconSize.s, tint = GearColor.Chalk400)
-            }
-            GearDivider()
+            GearButton("Continue verification", { nav.to("s41") }, Modifier.fillMaxWidth(), icon = Lucide.BadgeCheck)
         }
         VGap(Space.section)
     }
@@ -268,9 +283,9 @@ fun S37PublicProfile(nav: Nav) {
     val chosen by vm.profileHandle.collectAsStateWithLifecycle()
     // Whoever was chosen on the way here — a listing's owner, or the renter
     // from their own Profile tab — else the owner of the listing in view.
-    val handle = chosen ?: selected?.owner?.handle ?: Demo.kavitha.handle
+    val handle = chosen ?: selected?.owner?.handle ?: vm.me
     val person = people[handle] ?: return
-    val mine = handle == Seed.ME
+    val mine = handle == vm.me
     // From every listing, not from search: search leaves out the renter's own.
     val theirs = listings.filter { it.owner.handle == handle && it.status == ListingStatus.PUBLISHED }
     val about = reviews.filter { it.subject.handle == handle }
@@ -311,8 +326,8 @@ fun S37PublicProfile(nav: Nav) {
                 val stats = vm.trustStats(handle)
                 Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
                     StatTile("${stats.first}", "Rentals", Modifier.weight(1f))
-                    StatTile("★ ${person.ratingText}", "Rating", Modifier.weight(1f))
-                    StatTile(person.respondsIn, "Responds", Modifier.weight(1f))
+                    StatTile(if (person.reviews > 0) "★ ${person.ratingText}" else "New", "Rating", Modifier.weight(1f))
+                    StatTile(person.respondsIn.ifBlank { "—" }, "Replies", Modifier.weight(1f))
                 }
 
                 VGap(Space.m)
@@ -322,12 +337,8 @@ fun S37PublicProfile(nav: Nav) {
 
                 VGap(Space.m)
                 Banner(
-                    text = if (mine) {
-                        "This is how other members see you. Your address and number are never part of it."
-                    } else {
-                        "Exact location and contact details are never shown on a public profile. " +
-                            "They unlock for the other party only once a booking exists."
-                    },
+                    text = if (mine) "This is how others see you. Your address and number stay hidden."
+                    else "Exact location and contact details are never shown until a booking exists.",
                     kind = BannerKind.INFO,
                 )
                 VGap(Space.s)
@@ -348,7 +359,7 @@ fun S37PublicProfile(nav: Nav) {
                 VGap(Space.s)
                 if (theirs.isEmpty()) {
                     Text(
-                        if (mine) "Nothing listed for rent yet. Anything in your closet can be listed in a couple of minutes."
+                        if (mine) "Nothing listed for rent yet."
                         else "Nothing listed for rent right now.",
                         style = GearType.bodyS,
                         color = GearText.tertiary,
@@ -385,64 +396,113 @@ fun S37PublicProfile(nav: Nav) {
 /* ------------------------------------------------------------------ S-41 */
 
 /**
- * S-41 · Read the verification steps; Update the current one — the home address
- * step stores the address it verifies, which unlocks delivery and listing your
- * own gear; Delete the address again, which re-opens the step.
+ * The verification steps, in order. Each one asks for the one thing it names —
+ * a mobile number, a photo of an ID, a selfie, a card, an address — and
+ * unlocks something specific. The address can be withdrawn, which re-opens it.
  */
 @Composable
 fun S41Verification(nav: Nav) {
     val vm: EvidenceTrustViewModel = gearViewModel()
     val steps by vm.verification.collectAsStateWithLifecycle()
+    val details by vm.verificationDetails.collectAsStateWithLifecycle()
     val address by vm.address.collectAsStateWithLifecycle()
-    var verifying by rememberSaveable { mutableStateOf(false) }
-    var typed by rememberSaveable { mutableStateOf("") }
+    var verifying by rememberSaveable { mutableStateOf<String?>(null) }
     val done = steps.count { it.state == VerificationStep.State.DONE }
     val words = listOf("None", "One", "Two", "Three", "Four", "Five", "Six")
 
-    GearScreen(
-        appBar = { AppBar(title = "Verification", onBack = { nav.back() }) },
-    ) {
+    GearScreen(appBar = { AppBar(title = "Verification", onBack = { nav.back() }) }) {
         VGap(Space.m)
         Text(
             if (done == steps.size && steps.isNotEmpty()) "All six done" else "${words.getOrElse(done) { "$done" }} of six done",
             style = GearType.headingXl,
             color = GearText.primary,
         )
-        VGap(Space.s)
-        Text(
-            "Each step unlocks something specific. Nothing is asked for without a reason.",
-            style = GearType.bodyM,
-            color = GearText.secondary,
-        )
-
         VGap(Space.l)
         steps.forEachIndexed { i, step ->
             VerificationRow(
                 step,
                 isLast = i == steps.lastIndex,
-                detail = if (step.isHomeAddress && step.state == VerificationStep.State.DONE) address else null,
-                onVerify = { typed = ""; verifying = true },
+                detail = when {
+                    step.isHomeAddress && step.state == VerificationStep.State.DONE -> address
+                    step.state == VerificationStep.State.DONE -> details[step.title]?.takeIf { !it.startsWith("file:") }
+                    else -> null
+                },
+                removable = step.isHomeAddress,
+                onVerify = { verifying = step.title },
                 onRemove = { vm.removeAddress() },
             )
         }
         VGap(Space.section)
     }
 
-    if (verifying) {
-        GearDialog(
-            title = "Verify your home address",
-            onDismiss = { verifying = false },
-            confirmLabel = "Verify",
-            onConfirm = { vm.verifyCurrent(typed) { ok -> if (ok) verifying = false } },
-            confirmEnabled = typed.trim().length >= 8,
-        ) {
-            Text(
-                "Used only to unlock delivery and to list your own gear. It is never shown on your profile.",
-                style = GearType.bodyS,
-                color = GearText.secondary,
-            )
-            VGap(Space.s)
-            GearTextField(typed, label = "Address", placeholder = "e.g. 11 Stanley Rd, Jaffna", onValueChange = { typed = it }, singleLine = false)
+    verifying?.let { title -> VerifyDialog(vm, title) { verifying = null } }
+}
+
+/** The dialog for one step, asking only for what that step needs. */
+@Composable
+private fun VerifyDialog(vm: EvidenceTrustViewModel, title: String, onDismiss: () -> Unit) {
+    var text by rememberSaveable { mutableStateOf("") }
+    var expiry by rememberSaveable { mutableStateOf("") }
+    var photo by rememberSaveable { mutableStateOf<String?>(null) }
+    var error by rememberSaveable { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val selfie = title == "Selfie match"
+    val picker = rememberPhotoPicker(
+        title = if (selfie) "A selfie" else "Your ID",
+        onTaken = { file -> scope.launch { photo = vm.adoptPhoto(file) } },
+        onChosen = if (selfie) null else ({ uri -> scope.launch { photo = vm.importPhoto(uri) } }),
+        front = selfie,
+    )
+    val proof = when (title) {
+        "Phone number" -> EvidenceRepository.Proof(phone = text)
+        "Government ID", "Selfie match" -> EvidenceRepository.Proof(photoKey = photo)
+        "Payment method" -> EvidenceRepository.Proof(cardNumber = text, cardExpiry = expiry)
+        else -> EvidenceRepository.Proof(address = text)
+    }
+    GearDialog(
+        title = when (title) {
+            "Phone number" -> "Verify your mobile number"
+            "Government ID" -> "Photograph your ID"
+            "Selfie match" -> "Take a selfie"
+            "Payment method" -> "Add a payment card"
+            else -> "Verify your home address"
+        },
+        onDismiss = onDismiss,
+        confirmLabel = "Verify",
+        onConfirm = { vm.verify(proof) { e -> if (e == null) onDismiss() else error = e } },
+        confirmEnabled = when (title) {
+            "Government ID", "Selfie match" -> photo != null
+            "Payment method" -> text.filter(Char::isDigit).length >= 13 && expiry.filter(Char::isDigit).length == 4
+            else -> text.trim().length >= 8
+        },
+    ) {
+        Text(
+            when (title) {
+                "Phone number" -> "Lets owners message you about a booking. It's never shown on your profile."
+                "Government ID" -> "A clear photo of your NIC, passport or driving licence. It stays on this phone."
+                "Selfie match" -> "A clear photo of your face. It stays on this phone."
+                "Payment method" -> "Only the brand and last four digits are kept. Deposits are held, not charged."
+                else -> "Never shown on your profile."
+            },
+            style = GearType.bodyS,
+            color = GearText.secondary,
+        )
+        VGap(Space.s)
+        when (title) {
+            "Phone number" -> GearTextField(text, label = "Mobile number", placeholder = "077 123 4567", onValueChange = { text = it; error = null }, keyboardType = androidx.compose.ui.text.input.KeyboardType.Phone, error = error)
+            "Government ID", "Selfie match" -> {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                    photo?.let { GearImage(it, "Photo", Modifier.size(72.dp), GearShape.sm) }
+                    GearButton(if (photo == null) "Take the photo" else "Retake", { picker.open() }, type = ButtonType.SECONDARY, size = ButtonSize.M, icon = Lucide.Camera)
+                }
+                error?.let { VGap(Space.xs); Text(it, style = GearType.bodyS, color = GearColor.Danger500) }
+            }
+            "Payment method" -> {
+                GearTextField(text, label = "Card number", onValueChange = { text = it.filter(Char::isDigit).take(19); error = null }, keyboardType = androidx.compose.ui.text.input.KeyboardType.Number, visualTransformation = CardNumberTransformation)
+                VGap(Space.s)
+                GearTextField(expiry, label = "Expiry", placeholder = "MM/YY", onValueChange = { expiry = it.filter(Char::isDigit).take(4); error = null }, keyboardType = androidx.compose.ui.text.input.KeyboardType.Number, error = error, visualTransformation = ExpiryTransformation)
+            }
+            else -> GearTextField(text, label = "Address", placeholder = "e.g. 11 Stanley Rd, Jaffna", onValueChange = { text = it; error = null }, singleLine = false, error = error)
         }
     }
 }
@@ -452,6 +512,7 @@ private fun VerificationRow(
     step: VerificationStep,
     isLast: Boolean,
     detail: String?,
+    removable: Boolean,
     onVerify: () -> Unit,
     onRemove: () -> Unit,
 ) {
@@ -503,12 +564,12 @@ private fun VerificationRow(
             }
             if (current) {
                 VGap(Space.s)
-                GearButton("Verify now", onVerify, type = ButtonType.PRIMARY, size = ButtonSize.M, icon = Lucide.House)
+                GearButton("Verify now", onVerify, type = ButtonType.PRIMARY, size = ButtonSize.M, icon = Lucide.BadgeCheck)
             }
             if (detail != null) {
                 VGap(Space.s)
                 Text(detail, style = GearType.bodyS, color = GearText.body)
-                GearLink("Remove this address", onRemove, color = GearText.tertiary, icon = Lucide.Trash2)
+                if (removable) GearLink("Remove this address", onRemove, color = GearText.tertiary, icon = Lucide.Trash2)
             }
         }
     }

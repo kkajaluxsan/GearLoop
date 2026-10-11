@@ -5,4 +5,6 @@
     <color name="chalk_100">#EDEFEA</color>
     <color name="pine_800">#10352E</color>
     <color name="hivis_500">#D6E32E</color>
+    <!-- The splash screen is the same pine in both themes, like the launcher icon. -->
+    <color name="pine_900">#0A211C</color>
 </resources>

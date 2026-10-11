@@ -6,4 +6,6 @@
     <color name="pine_800">#164137</color>
     <!-- Hi-vis does not follow the theme. It marks action and safety. -->
     <color name="hivis_500">#D6E32E</color>
+    <!-- The splash screen is the same pine in both themes, like the launcher icon. -->
+    <color name="pine_900">#0A211C</color>
 </resources>

@@ -1,12 +1,13 @@
 package com.gearloop.app.data.repo
 
 import androidx.room.withTransaction
+import com.gearloop.app.data.AppClock
 import com.gearloop.app.data.Availability
 import com.gearloop.app.data.BookingStatus
+import com.gearloop.app.data.Pricing
 import com.gearloop.app.data.ChatMessage
 import com.gearloop.app.data.DayState
 import com.gearloop.app.data.Demo
-import com.gearloop.app.data.DemoClock
 import com.gearloop.app.data.Fit
 import com.gearloop.app.data.GearItem
 import com.gearloop.app.data.Grade
@@ -21,8 +22,8 @@ import com.gearloop.app.data.db.CalendarBlockEntity
 import com.gearloop.app.data.db.ClosetItemEntity
 import com.gearloop.app.data.db.GearDatabase
 import com.gearloop.app.data.db.ListingEntity
-import com.gearloop.app.data.db.RailEntryEntity
 import com.gearloop.app.data.db.ReviewEntity
+import com.gearloop.app.data.db.SwapMatchEntity
 import com.gearloop.app.data.db.SwapProposalEntity
 import com.gearloop.app.data.db.WalletTxnEntity
 import com.gearloop.app.data.dateRange
@@ -40,18 +41,15 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
+import java.util.Locale
 
 /**
- * Member 4 — Exchange & the Supply Side.
+ * Exchange & the Supply Side: the swap feed, proposals and the three-way loop;
+ * the owner's dashboard, listings, calendar and requests; the gear closet.
  *
- * S-19 Swap feed · S-20 Build proposal · S-21 Fairness · S-22 Proposal detail ·
- * S-23 Cycle preview · S-24 Owner dashboard · S-25 / S-26 Create listing ·
- * S-27 Calendar · S-28 Requests · S-36 Gear closet.
- *
- * The owner console (S-24 to S-28) is Kavitha's: the dataset makes her the host
- * with six listed units, so a request Nirmal sends from the renter's side lands
- * in her inbox here, and accepting it confirms it on his rentals screen. One
- * device, two sides of the market, one database.
+ * The owner screens are the signed-in member's own: a request one member sends
+ * lands in the owner's inbox when the owner signs in, and accepting it confirms
+ * it on the renter's rentals screen. One database, both sides of the market.
  */
 class ExchangeRepository(
     private val db: GearDatabase,
@@ -61,12 +59,12 @@ class ExchangeRepository(
     private val scope: CoroutineScope,
 ) {
     private val dao = db.exchange()
+    private val me: String get() = session.handle
 
     /**
      * Every read-modify-write of a row goes through this, one at a time. Two
      * edits launched together used to read the same row and the second write
-     * put back what the first had changed: the cash on a sent proposal (D-14),
-     * a listing title typed on S-25 (D-15).
+     * put back what the first had changed (D-14, D-15).
      */
     private val edits = Mutex()
 
@@ -74,7 +72,7 @@ class ExchangeRepository(
 
     // ============================================================ valuations
 
-    /** Fair market values, as S-21's valuation columns derive them. */
+    /** Fair market values for the original catalogue, as the valuation columns derive them. */
     private val fmv = mapOf(
         "burton" to Demo.BURTON_FMV,
         "santacruz" to Demo.SANTACRUZ_FMV,
@@ -91,7 +89,8 @@ class ExchangeRepository(
         "mycamp" to 8_000,
     )
 
-    fun valueOf(item: GearItem): Int = fmv[item.id] ?: (item.deposit * 2)
+    /** What an item is worth today; for anything else, [Pricing.estimatedValue]. */
+    fun valueOf(item: GearItem): Int = fmv[item.id] ?: Pricing.estimatedValue(item)
 
     /** The arithmetic behind a value, row by row, ending in the value itself. */
     fun valuationRows(item: GearItem): List<Pair<String, String>> = when (item.id) {
@@ -103,16 +102,16 @@ class ExchangeRepository(
                 "New price" to grouped((value / 0.85 / 0.7).toInt() / 100 * 100),
                 "Age" to "−30%",
                 "Grade ${item.grade.letter}" to if (item.grade == Grade.A) "×1.00" else "×0.85",
-                "FMV" to grouped(value),
+                "Worth now" to grouped(value),
             )
         }
     }
 
-    // ============================================================ S-19 matches
+    // ============================================================ the swap feed
 
     val matches: StateFlow<List<Match>> = combine(store.matchRows, store.allItems, store.people, store.proposalRows) { rows, items, people, proposals ->
         val byId = items.associateBy { it.id }
-        rows.filter { !it.hidden }.mapNotNull { r ->
+        rows.filter { !it.hidden }.sortedBy { it.position }.mapNotNull { r ->
             val give = byId[r.giveListingId] ?: return@mapNotNull null
             val get = byId[r.getListingId] ?: return@mapNotNull null
             val person = people[r.counterpartyHandle] ?: return@mapNotNull null
@@ -123,17 +122,51 @@ class ExchangeRepository(
 
     val hiddenCount: StateFlow<Int> = store.matchRows.map { rows -> rows.count { it.hidden } }.hot(0)
 
-    /** S-19 — Update: hide a match ("not for me"). Undoable. */
+    /** Hide a match ("not for me"). Undoable. */
     suspend fun setMatchHidden(id: String, hidden: Boolean) = dao.setMatchHidden(id, hidden)
+
+    /**
+     * Find trades for the signed-in member: each piece of their own gear against
+     * other members' gear worth between half and twice as much, closest in value
+     * first. Matches already found (or hidden) are kept; new ones are added.
+     * Returns how many were added.
+     */
+    suspend fun refreshMatches(): Int = edits.withLock {
+        val h = me.ifEmpty { return@withLock 0 }
+        val mine = store.allItems.value.filter { it.owner.handle == h && it.status != ListingStatus.DRAFT }
+        if (mine.isEmpty()) return@withLock 0
+        val existing = dao.matchesOf(h)
+        val taken = existing.map { it.giveListingId to it.getListingId }.toSet()
+        val others = store.allItems.value.filter { it.owner.handle != h && it.owner.handle != Seed.ADMIN && it.status != ListingStatus.DRAFT }
+        val found = mine.flatMap { give ->
+            val gv = valueOf(give)
+            others.filter { get ->
+                val v = valueOf(get)
+                v in (gv / 2)..(gv * 2) && get.sport != give.sport && (give.id to get.id) !in taken
+            }.map { get -> Triple(give, get, kotlin.math.abs(valueOf(get) - gv)) }
+        }.sortedBy { it.third }.distinctBy { it.second.id }.take((6 - existing.count { !it.hidden }).coerceAtLeast(0))
+        found.forEachIndexed { i, (give, get, _) ->
+            dao.upsertMatch(
+                SwapMatchEntity(
+                    id = "m-${h.removePrefix("@")}-${give.id}-${get.id}", handle = h,
+                    giveListingId = give.id, getListingId = get.id, giveValue = valueOf(give), getValue = valueOf(get),
+                    counterpartyHandle = get.owner.handle, threeWay = false, hidden = false, position = existing.size + i,
+                ),
+            )
+        }
+        found.size
+    }
 
     // ============================================================ proposals
 
-    val proposals: StateFlow<List<Proposal>> = combine(store.proposalRows, store.allItems, store.people) { rows, items, people ->
+    /** Every proposal the member is part of, made or received. */
+    val proposals: StateFlow<List<Proposal>> = combine(store.proposalRows, store.allItems, store.people, store.me) { rows, items, people, h ->
         val byId = items.associateBy { it.id }
-        rows.mapNotNull { r ->
+        rows.filter { it.proposerHandle == h || it.counterpartyHandle == h }.mapNotNull { r ->
             Proposal(
                 ref = r.ref,
                 matchId = r.matchId,
+                proposer = people[r.proposerHandle] ?: return@mapNotNull null,
                 give = byId[r.giveListingId] ?: return@mapNotNull null,
                 get = byId[r.getListingId] ?: return@mapNotNull null,
                 giveValue = r.giveValue,
@@ -142,8 +175,8 @@ class ExchangeRepository(
                 boot = r.boot,
                 status = r.status,
                 round = r.round,
-                expiresAt = DemoClock.fromMillis(r.expiresAt),
-                updatedAt = DemoClock.fromMillis(r.updatedAt),
+                expiresAt = AppClock.fromMillis(r.expiresAt),
+                updatedAt = AppClock.fromMillis(r.updatedAt),
             )
         }
     }.hot(emptyList())
@@ -156,23 +189,27 @@ class ExchangeRepository(
         if (p == null) emptyList() else list.filter { it.threadId == p.ref }
     }.hot(emptyList())
 
-    /** What the renter could offer: the board they own, and the kit in their closet. */
+    /** Whether it is the signed-in member's turn on [p]: theirs to accept, counter or decline. */
+    fun myMove(p: Proposal): Boolean = when (p.status) {
+        ProposalStatus.SENT -> p.counterparty.handle == me
+        ProposalStatus.COUNTERED, ProposalStatus.DRAFT -> p.proposer.handle == me
+        else -> false
+    }
+
+    /** What the member could offer: their own gear, listed or kept for swaps. */
     fun myGear(): List<GearItem> = store.allItems.value
-        // What the renter owns and has listed, the board first. This was the
-        // Burton plus Kavitha's helmet and wetsuit, offered as his own.
-        .filter { it.owner.handle == Seed.ME && it.status != ListingStatus.DRAFT }
+        .filter { it.owner.handle == me && it.status != ListingStatus.DRAFT }
         .sortedBy { if (it.id == Demo.burton.id) 0 else 1 }
 
     /** What the other side could give: the item matched first, then the rest of their gear. */
     fun theirGear(p: Proposal): List<GearItem> {
-        // Only theirs: Dinesh's list used to end with Kavitha's kayak.
         val theirs = store.allItems.value.filter {
             it.owner.handle == p.counterparty.handle && it.id != p.get.id && it.status != ListingStatus.DRAFT
         }
-        return (listOf(p.get) + theirs).distinctBy { it.id }.take(3)
+        return (listOf(p.get) + theirs).distinctBy { it.id }.take(4)
     }
 
-    /** S-19 "Propose swap" — Create a draft, or reopen the one already under way. */
+    /** "Propose swap" — Create a draft, or reopen the one already under way. */
     suspend fun proposeFromMatch(matchId: String): String? {
         val match = dao.match(matchId) ?: return null
         val existing = dao.openProposalFor(matchId)
@@ -181,10 +218,10 @@ class ExchangeRepository(
             return existing.ref
         }
         val ref = nextProposalRef(dao.proposalRefs().toSet())
-        val now = DemoClock.nowMillis()
+        val now = AppClock.nowMillis()
         dao.upsertProposal(
             SwapProposalEntity(
-                ref = ref, matchId = matchId,
+                ref = ref, matchId = matchId, proposerHandle = me,
                 giveListingId = match.giveListingId, getListingId = match.getListingId,
                 giveValue = match.giveValue, getValue = match.getValue,
                 counterpartyHandle = match.counterpartyHandle,
@@ -201,63 +238,87 @@ class ExchangeRepository(
     private suspend fun editProposal(change: (SwapProposalEntity) -> SwapProposalEntity) = edits.withLock {
         val ref = proposal.value?.ref ?: return@withLock
         val row = dao.proposal(ref) ?: return@withLock
-        dao.upsertProposal(change(row).copy(updatedAt = DemoClock.nowMillis()))
+        dao.upsertProposal(change(row).copy(updatedAt = AppClock.nowMillis()))
     }
 
-    /** S-20 — Update what is given. */
     suspend fun setGive(item: GearItem) = editProposal { it.copy(giveListingId = item.id, giveValue = valueOf(item)) }
 
-    /** S-20 — Update what is wanted. */
     suspend fun setGet(item: GearItem) = editProposal { it.copy(getListingId = item.id, getValue = valueOf(item)) }
 
     /**
-     * S-21 "Send proposal" — Update: sent, or sent back as a counter. The cash
-     * comes in with the send and is written in the same row update, so the
-     * amount on the slider is the amount that goes (D-14).
+     * "Send" — the proposer sends the offer (or a new one after a counter); the
+     * counterparty sends a counter with the cash they would want. The cash comes
+     * in with the send and is written in the same row update (D-14).
      */
     suspend fun send(boot: Int? = null) = edits.withLock {
         val p = proposal.value ?: return@withLock
         val row = dao.proposal(p.ref) ?: return@withLock
-        val now = DemoClock.nowMillis()
-        val round = if (row.status == ProposalStatus.DRAFT) 1 else row.round + 1
+        val now = AppClock.nowMillis()
         val cash = (boot ?: row.boot).coerceAtLeast(0)
+        val fromProposer = row.proposerHandle == me
+        val round = if (row.status == ProposalStatus.DRAFT) 1 else (row.round + 1).coerceAtMost(5)
+        val name = store.person(me).name.substringBefore(' ')
         db.withTransaction {
-            dao.upsertProposal(row.copy(boot = cash, status = ProposalStatus.SENT, round = round.coerceAtMost(5), updatedAt = now))
+            dao.upsertProposal(
+                row.copy(
+                    boot = cash,
+                    status = if (fromProposer) ProposalStatus.SENT else ProposalStatus.COUNTERED,
+                    round = round,
+                    updatedAt = now,
+                ),
+            )
             val plus = if (cash > 0) " + ${lkr(cash)}" else ""
-            money.post(row.ref, "My ${p.give.shortTitle}$plus for your ${p.get.shortTitle}.", ChatMessage.Kind.TEXT, fromMe = true)
-        }
-    }
-
-    /** S-22 "Accept" — Update: agreed, and the cash goes into escrow. */
-    suspend fun accept() {
-        val p = proposal.value ?: return
-        val row = dao.proposal(p.ref) ?: return
-        val now = DemoClock.nowMillis()
-        db.withTransaction {
-            dao.upsertProposal(row.copy(status = ProposalStatus.ACCEPTED, updatedAt = now))
-            if (row.boot > 0) db.money().insertTxn(WalletTxnEntity(label = "Escrow · ${row.ref}", amount = -row.boot, createdAt = now))
-            money.post(row.ref, "Swap agreed · ${row.ref}", ChatMessage.Kind.SYSTEM, fromMe = false)
+            val text = if (fromProposer) "My ${p.give.shortTitle}$plus for your ${p.get.shortTitle}."
+            else "I'd do it for your ${p.give.shortTitle}$plus."
+            money.post(row.ref, me, text, ChatMessage.Kind.TEXT)
+            val other = if (fromProposer) row.counterpartyHandle else row.proposerHandle
             money.notify(
-                NotificationItem.Kind.SWAP,
-                "Swap agreed with ${p.counterparty.name.substringBefore(' ')}",
-                "${p.give.shortTitle} for ${p.get.shortTitle}" + if (row.boot > 0) " · ${lkr(row.boot)} held in escrow" else "",
-                "s22",
-                row.ref,
+                other, NotificationItem.Kind.SWAP,
+                if (fromProposer) "$name sent you a swap proposal" else "$name countered your swap",
+                "${p.give.shortTitle} for ${p.get.shortTitle}$plus · round $round of 5", "s22", row.ref,
             )
         }
     }
 
-    /** S-22 — Update: turned down. */
-    suspend fun decline() {
-        val ref = proposal.value?.ref ?: return
-        dao.setProposalStatus(ref, ProposalStatus.DECLINED, DemoClock.nowMillis())
+    /** "Accept" — agreed, and any cash goes into escrow from the proposer. */
+    suspend fun accept() {
+        val p = proposal.value ?: return
+        val row = dao.proposal(p.ref) ?: return
+        // Keep this swap on screen once it is no longer open.
+        session.selectProposal(p.ref)
+        val now = AppClock.nowMillis()
+        val name = store.person(me).name.substringBefore(' ')
+        db.withTransaction {
+            dao.upsertProposal(row.copy(status = ProposalStatus.ACCEPTED, updatedAt = now))
+            if (row.boot > 0) db.money().insertTxn(WalletTxnEntity(handle = row.proposerHandle, label = "Escrow · ${row.ref}", amount = -row.boot, createdAt = now))
+            money.post(row.ref, MoneyRepository.SYSTEM, "Swap agreed · ${row.ref}", ChatMessage.Kind.SYSTEM)
+            val other = if (row.proposerHandle == me) row.counterpartyHandle else row.proposerHandle
+            val summary = "${p.give.shortTitle} for ${p.get.shortTitle}" + if (row.boot > 0) " · ${lkr(row.boot)} held in escrow" else ""
+            money.notify(other, NotificationItem.Kind.SWAP, "$name accepted the swap", summary, "s22", row.ref)
+            money.notify(me, NotificationItem.Kind.SWAP, "Swap agreed", summary, "s22", row.ref)
+            db.evidence().earnBadge(row.proposerHandle, "Swap trader")
+            db.evidence().earnBadge(row.counterpartyHandle, "Swap trader")
+        }
     }
 
-    /** S-22 — Delete a draft outright, or withdraw one already sent. */
+    /** "Decline" — turned down, and the other side is told. */
+    suspend fun decline() {
+        val p = proposal.value ?: return
+        val row = dao.proposal(p.ref) ?: return
+        val now = AppClock.nowMillis()
+        dao.setProposalStatus(row.ref, ProposalStatus.DECLINED, now)
+        val other = if (row.proposerHandle == me) row.counterpartyHandle else row.proposerHandle
+        money.notify(other, NotificationItem.Kind.SWAP, "${store.person(me).name.substringBefore(' ')} declined the swap", "${p.give.shortTitle} for ${p.get.shortTitle}", "s22", row.ref)
+    }
+
+    /** Delete a draft outright, or withdraw one already sent. */
     suspend fun withdraw() {
         val p = proposal.value ?: return
         if (p.status == ProposalStatus.DRAFT) dao.deleteProposal(p.ref)
-        else dao.setProposalStatus(p.ref, ProposalStatus.WITHDRAWN, DemoClock.nowMillis())
+        else {
+            dao.setProposalStatus(p.ref, ProposalStatus.WITHDRAWN, AppClock.nowMillis())
+            money.notify(p.counterparty.handle, NotificationItem.Kind.SWAP, "${p.proposer.name.substringBefore(' ')} withdrew a swap", "${p.give.shortTitle} for ${p.get.shortTitle}", "s22", p.ref)
+        }
     }
 
     private fun nextProposalRef(used: Set<String>): String {
@@ -266,11 +327,11 @@ class ExchangeRepository(
         return "SW-$n"
     }
 
-    // ============================================================ S-23 cycle
+    // ============================================================ the three-way loop
 
-    val cycle: StateFlow<Cycle?> = combine(store.cycleRows, store.allItems, store.people) { rows, items, people ->
+    val cycle: StateFlow<Cycle?> = combine(store.cycleRows, store.allItems, store.people, store.me) { rows, items, people, h ->
         val byId = items.associateBy { it.id }
-        rows.groupBy { it.cycleId }.entries.firstOrNull()?.let { (id, members) ->
+        rows.groupBy { it.cycleId }.entries.firstOrNull { (_, m) -> m.any { it.handle == h } }?.let { (id, members) ->
             Cycle(
                 id,
                 members.sortedBy { it.position }.mapNotNull { m ->
@@ -282,23 +343,40 @@ class ExchangeRepository(
         }
     }.hot(null)
 
-    /** S-23 — Update the renter's own seat: accept, decline, or take it back. */
+    /** The member's own seat: accept, decline, or take it back. */
     suspend fun setMyAcceptance(accepted: Boolean?) {
         val c = cycle.value ?: return
-        dao.setCycleAcceptance(c.id, Seed.ME, accepted)
+        dao.setCycleAcceptance(c.id, me, accepted)
+        val name = store.person(me).name.substringBefore(' ')
+        c.members.filter { it.person.handle != me }.forEach {
+            money.notify(
+                it.person.handle, NotificationItem.Kind.SWAP,
+                when (accepted) {
+                    true -> "$name accepted the three-way swap"
+                    false -> "$name declined the three-way swap"
+                    null -> "$name withdrew their answer on the three-way swap"
+                },
+                "Loop ${c.id}", "s23", c.id,
+            )
+        }
     }
 
-    // ============================================================ owner console
+    // ============================================================ the owner's console
 
-    private val ownerItems: StateFlow<List<GearItem>> = store.allItems
-        .map { list -> list.filter { it.owner.handle == Seed.OWNER && it.status == ListingStatus.PUBLISHED } }
-        .hot(emptyList())
+    private val ownerItems: StateFlow<List<GearItem>> = combine(store.allItems, store.me) { list, h ->
+        list.filter { it.owner.handle == h && it.status == ListingStatus.PUBLISHED }
+    }.hot(emptyList())
 
-    private val ownerBookings: StateFlow<List<Booking>> = store.bookings
-        .map { list -> list.filter { it.owner.handle == Seed.OWNER && it.status != BookingStatus.DRAFT } }
-        .hot(emptyList())
+    /** Every listing the member has made, drafts and paused ones included. */
+    val myListings: StateFlow<List<GearItem>> = combine(store.allItems, store.me) { list, h ->
+        list.filter { it.owner.handle == h }.sortedBy { it.status.ordinal }
+    }.hot(emptyList())
 
-    /** The units, in the order the calendar lists them: the boards, then the rest. */
+    private val ownerBookings: StateFlow<List<Booking>> = combine(store.bookings, store.me) { list, h ->
+        list.filter { it.owner.handle == h && it.status != BookingStatus.DRAFT }
+    }.hot(emptyList())
+
+    /** The units, in the order the calendar lists them. */
     val units: StateFlow<List<CalendarUnit>> = ownerItems.map { items ->
         val order = listOf("torq", "kayak", "trek", "helmet", "wetsuit")
         items.sortedBy { order.indexOf(it.id).let { i -> if (i < 0) 99 else i } }
@@ -311,24 +389,32 @@ class ExchangeRepository(
         val occupancy: Int,
         val listings: Int,
         val ratingText: String,
+        /** Payouts per week, oldest first, as a fraction of the best week. */
+        val weekly: List<Float>,
     )
 
-    val dashboard: StateFlow<Dashboard> = combine(ownerBookings, units, store.people) { bookings, unitList, people ->
-        val worldStart = DemoClock.toMillis(DemoClock.WORLD_START)
-        val inApp = bookings.filter {
-            DemoClock.toMillis(it.createdAt) >= worldStart &&
-                it.status in setOf(BookingStatus.CONFIRMED, BookingStatus.ACTIVE, BookingStatus.RETURNED, BookingStatus.COMPLETED)
+    /** The owner's month, worked out from their payouts and bookings. */
+    val dashboard: StateFlow<Dashboard> = combine(ownerBookings, units, store.people, store.txnRows, store.me) { bookings, unitList, people, txns, h ->
+        val month = AppClock.today.withDayOfMonth(1)
+        val payouts = txns.filter { it.amount > 0 && it.label.startsWith("Payout") }
+        val thisMonth = payouts.filter { !AppClock.fromMillis(it.createdAt).toLocalDate().isBefore(month) }.sumOf { it.amount }
+        val owed = bookings.filter { it.status in setOf(BookingStatus.CONFIRMED, BookingStatus.ACTIVE, BookingStatus.RETURNED) && it.paymentMethod != MoneyRepository.PAY_CASH }
+            .sumOf { it.ownerPayout }
+        val weeks = (9 downTo 0).map { w ->
+            val from = AppClock.today.minusWeeks(w + 1L)
+            val to = AppClock.today.minusWeeks(w.toLong())
+            payouts.filter { val d = AppClock.fromMillis(it.createdAt).toLocalDate(); d.isAfter(from) && !d.isAfter(to) }.sumOf { it.amount }
         }
+        val best = weeks.maxOrNull()?.takeIf { it > 0 } ?: 1
         Dashboard(
-            earnings = Demo.EARNINGS_MONTH + inApp.sumOf { it.ownerPayout },
-            nextPayout = Demo.NEXT_PAYOUT,
-            occupancy = occupancyOf(unitList, bookings, DemoClock.today),
-            // Listings, not units: the Trek Marlin's two units made this read 6
-            // while her public profile (S-37) lists 5.
+            earnings = thisMonth,
+            nextPayout = owed,
+            occupancy = occupancyOf(unitList, bookings, AppClock.today),
             listings = unitList.map { it.item.id }.distinct().size,
-            ratingText = people[Seed.OWNER]?.ratingText ?: "",
+            ratingText = people[h]?.takeIf { it.reviews > 0 }?.ratingText ?: "New",
+            weekly = weeks.map { it.toFloat() / best },
         )
-    }.hot(Dashboard(Demo.EARNINGS_MONTH, Demo.NEXT_PAYOUT, 0, 0, ""))
+    }.hot(Dashboard(0, 0, 0, 0, "", List(10) { 0f }))
 
     /** Days held over the next fortnight, as a share of every unit's fourteen days. */
     private fun occupancyOf(unitList: List<CalendarUnit>, bookings: List<Booking>, from: LocalDate): Int {
@@ -347,7 +433,7 @@ class ExchangeRepository(
 
     /** "Needs you now": the most urgent request, any overdue return, and the open tasks. */
     val attention: StateFlow<List<Attention>> = combine(ownerBookings, store.taskRows) { bookings, tasks ->
-        val now = DemoClock.now()
+        val now = AppClock.now()
         val rows = mutableListOf<Attention>()
         bookings.filter { it.status == BookingStatus.REQUESTED && it.respondBy != null }
             .minByOrNull { it.respondBy!! }
@@ -382,7 +468,7 @@ class ExchangeRepository(
 
     /** Pickups and returns in the next three days, soonest first. */
     val comingUp: StateFlow<List<ComingUp>> = ownerBookings.map { bookings ->
-        val now = DemoClock.now()
+        val now = AppClock.now()
         val until = now.plusDays(3)
         val events = mutableListOf<ComingUp>()
         bookings.filter { it.status == BookingStatus.CONFIRMED || it.status == BookingStatus.ACTIVE }.forEach { b ->
@@ -396,50 +482,66 @@ class ExchangeRepository(
         events.sortedBy { it.at }
     }.hot(emptyList())
 
-    /** S-24 — Update a task to done; "Block dates" also creates the block it names. */
+    /** A task to done; "Block dates" also creates the block it names. */
     suspend fun completeTask(taskId: String): String? {
         var message: String? = null
+        val task = store.taskRows.value.firstOrNull { it.id == taskId }
         db.withTransaction {
-            if (taskId == "service") {
-                val day = LocalDate.of(2026, 8, 12)
-                if (dao.blockCount("trek", 2, day.toEpochDay()) == 0) {
-                    dao.insertBlock(CalendarBlockEntity(listingId = "trek", unit = 2, day = day.toEpochDay(), reason = "Service"))
+            if (task?.action == "Block dates") {
+                val day = dayIn(task.detail) ?: AppClock.today.plusDays(7)
+                val listing = store.allItems.value.firstOrNull { it.owner.handle == me && it.units > 1 } ?: store.allItems.value.firstOrNull { it.owner.handle == me }
+                if (listing != null) {
+                    val unit = listing.units
+                    if (dao.blockCount(listing.id, unit, day.toEpochDay()) == 0) {
+                        dao.insertBlock(CalendarBlockEntity(listingId = listing.id, unit = unit, day = day.toEpochDay(), reason = "Service"))
+                    }
+                    message = "Blocked ${dayMonth(day)} on ${if (listing.units > 1) "${listing.shortTitle} #$unit" else listing.shortTitle} for its service"
                 }
-                message = "Blocked ${dayMonth(day)} on Trek Marlin #2 for its service"
             }
             dao.setTaskDone(taskId, true)
         }
         return message
     }
 
-    /** S-24 "Write it" — Create the owner's review of a renter, then close the task. */
+    /** The first `12 Aug`-style date in [text], on or after today. */
+    private fun dayIn(text: String): LocalDate? {
+        val match = Regex("(\\d{1,2}) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)").find(text) ?: return null
+        val (d, m) = match.destructured
+        val month = java.time.Month.entries.first { it.name.take(3).equals(m, ignoreCase = true) }
+        val today = AppClock.today
+        val thisYear = runCatching { LocalDate.of(today.year, month, d.toInt()) }.getOrNull() ?: return null
+        return if (thisYear.isBefore(today.minusDays(30))) thisYear.plusYears(1) else thisYear
+    }
+
+    /** "Write it" — Create the owner's review of a renter, then close the task. */
     suspend fun reviewRenter(taskId: String, renterHandle: String, listingId: String, stars: Int, body: String) {
         db.withTransaction {
             db.discovery().insertReview(
                 ReviewEntity(
-                    listingId = listingId, subjectHandle = renterHandle, authorHandle = Seed.OWNER,
-                    date = dayMonth(DemoClock.today) + " " + DemoClock.today.year, stars = stars.coerceIn(1, 5),
-                    body = body.trim(), photos = emptyList(), ownerResponse = null, bookingRef = null, createdAt = DemoClock.nowMillis(),
+                    listingId = listingId, subjectHandle = renterHandle, authorHandle = me,
+                    date = dayMonth(AppClock.today) + " " + AppClock.today.year, stars = stars.coerceIn(1, 5),
+                    body = body.trim(), photos = emptyList(), ownerResponse = null, bookingRef = null, createdAt = AppClock.nowMillis(),
                 ),
             )
             dao.setTaskDone(taskId, true)
+            money.notify(renterHandle, NotificationItem.Kind.REVIEW, "${store.person(me).name.substringBefore(' ')} reviewed you", "★ $stars — “${body.trim().take(60)}”", "s32", null)
         }
     }
 
-    // ============================================================ S-27 calendar
+    // ============================================================ the calendar
 
     data class Conflict(val late: Booking, val next: Booking, val freeUnit: Int?)
 
     /** An overdue return on a unit that goes out again within a day. */
     val conflicts: StateFlow<List<Conflict>> = ownerBookings.map { bookings ->
-        val now = DemoClock.now()
+        val now = AppClock.now()
         bookings.filter { it.status == BookingStatus.ACTIVE && it.returnAt.isBefore(now) }.mapNotNull { late ->
             val next = bookings.filter {
                 it.item.id == late.item.id && it.unit == late.unit && it.ref != late.ref &&
                     it.status == BookingStatus.CONFIRMED && it.pickupAt.isAfter(now.minusHours(1)) && it.pickupAt.isBefore(now.plusDays(1))
             }.minByOrNull { it.pickupAt } ?: return@mapNotNull null
             val free = (1..late.item.units).filter { it != late.unit }.firstOrNull { u ->
-                Availability.isRangeFree(next.span, DemoClock.today, store.spansFor(next.item.id, u, next.ref), store.blockedFor(next.item.id, u))
+                Availability.isRangeFree(next.span, AppClock.today, store.spansFor(next.item.id, u, next.ref), store.blockedFor(next.item.id, u))
             }
             Conflict(late, next, free)
         }
@@ -461,7 +563,7 @@ class ExchangeRepository(
             val day = from.plusDays(d.toLong())
             val state = when {
                 requested.any { day in it } && confirmed.none { day in it } -> DayState.IN_RANGE
-                else -> Availability.stateOf(day, DemoClock.today, confirmed, blocked).let { if (it == DayState.TODAY) DayState.AVAILABLE else it }
+                else -> Availability.stateOf(day, AppClock.today, confirmed, blocked).let { if (it == DayState.TODAY) DayState.AVAILABLE else it }
             }
             DayCell(day, state)
         }
@@ -471,14 +573,13 @@ class ExchangeRepository(
         store.blockRows.value.firstOrNull { it.listingId == u.item.id && it.unit == u.unit && it.day == day.toEpochDay() }
             ?.let { CalendarBlock(it.id, it.listingId, it.unit, LocalDate.ofEpochDay(it.day), it.reason) }
 
-    /** S-27 — Create a block on a free day. Refused on a held day. */
+    /** Create a block on a free day. Refused on a held day. */
     suspend fun block(u: CalendarUnit, day: LocalDate, reason: String = "Owner block"): Long? {
         val held = store.spansNow(u.item.id, u.unit).any { day in it }
-        if (held || day.isBefore(DemoClock.today) || dao.blockCount(u.item.id, u.unit, day.toEpochDay()) > 0) return null
+        if (held || day.isBefore(AppClock.today) || dao.blockCount(u.item.id, u.unit, day.toEpochDay()) > 0) return null
         return dao.insertBlock(CalendarBlockEntity(listingId = u.item.id, unit = u.unit, day = day.toEpochDay(), reason = reason))
     }
 
-    /** S-27 — Delete a block. */
     suspend fun unblock(id: Long): CalendarBlockEntity? {
         val row = dao.block(id) ?: return null
         dao.deleteBlock(id)
@@ -489,29 +590,30 @@ class ExchangeRepository(
         dao.insertBlock(row.copy(id = 0))
     }
 
-    /** S-27 "Move to unit #2" — Update the booking onto a free unit. */
+    /** "Move to unit #2" — the booking onto a free unit. */
     suspend fun moveToUnit(ref: String, unit: Int) {
         val row = db.money().booking(ref) ?: return
-        db.money().upsertBooking(row.copy(unit = unit, updatedAt = DemoClock.nowMillis()))
+        db.money().upsertBooking(row.copy(unit = unit, updatedAt = AppClock.nowMillis()))
     }
 
-    // ============================================================ S-28 requests
+    // ============================================================ requests
 
     val requests: StateFlow<List<Booking>> = ownerBookings
         .map { list -> list.filter { it.status == BookingStatus.REQUESTED }.sortedBy { it.respondBy } }
         .hot(emptyList())
 
     val ownerUpcoming: StateFlow<List<Booking>> = ownerBookings
-        .map { list -> list.filter { it.status == BookingStatus.CONFIRMED || it.status == BookingStatus.ACTIVE }.sortedBy { it.start } }
+        // A return waiting on the owner's check is still the owner's to do.
+        .map { list -> list.filter { it.status == BookingStatus.CONFIRMED || it.status == BookingStatus.ACTIVE || it.status == BookingStatus.RETURNED }.sortedBy { it.start } }
         .hot(emptyList())
 
     val ownerPast: StateFlow<List<Booking>> = ownerBookings
-        .map { list -> list.filter { it.status in setOf(BookingStatus.COMPLETED, BookingStatus.DECLINED, BookingStatus.CANCELLED, BookingStatus.RETURNED) }.sortedByDescending { it.start } }
+        .map { list -> list.filter { it.status in setOf(BookingStatus.COMPLETED, BookingStatus.DECLINED, BookingStatus.CANCELLED) }.sortedByDescending { it.start } }
         .hot(emptyList())
 
     fun trustStats(handle: String) = store.trustStats(handle)
 
-    /** S-28 — Update: accept. The renter is told if the renter is on this device. */
+    /** Accept a request. The renter is told, and the pickup address released to them. */
     suspend fun accept(ref: String): Boolean {
         val row = db.money().booking(ref) ?: return false
         if (row.status != BookingStatus.REQUESTED) return false
@@ -520,37 +622,40 @@ class ExchangeRepository(
         // blocks do, because accepting is the moment the dates become held.
         val confirmed = dao.confirmedOn(row.listingId, row.unit, ref)
             .map { Availability.Span(LocalDate.ofEpochDay(it.startDay), LocalDate.ofEpochDay(it.endDay)) }
-        val free = Availability.isRangeFree(span, DemoClock.today, confirmed, store.blocksNow(row.listingId, row.unit))
+        val free = Availability.isRangeFree(span, AppClock.today, confirmed, store.blocksNow(row.listingId, row.unit))
         if (!free) return false
-        val now = DemoClock.nowMillis()
+        val now = AppClock.nowMillis()
         val item = store.item(row.listingId)
+        val owner = store.person(row.ownerHandle).name.substringBefore(' ')
         db.withTransaction {
             db.money().upsertBooking(row.copy(status = BookingStatus.CONFIRMED, respondBy = null, updatedAt = now))
-            if (row.renterHandle == Seed.ME) {
-                money.notify(NotificationItem.Kind.BOOKING, "Kavitha accepted your request", "${item?.title ?: ref} · ${dateRange(span.start, span.end)} · $ref", "s31", ref)
-                money.post(Seed.OWNER, "Booking confirmed · $ref", ChatMessage.Kind.SYSTEM, fromMe = false)
-                money.post(Seed.OWNER, "Pickup point · ${MoneyRepository.pickupAddress(Seed.OWNER)}", ChatMessage.Kind.LOCATION, fromMe = false)
-            }
+            money.notify(row.renterHandle, NotificationItem.Kind.BOOKING, "$owner accepted your request", "${item?.title ?: ref} · ${dateRange(span.start, span.end)} · $ref", "s12", ref)
+            money.postDm(row.renterHandle, row.ownerHandle, MoneyRepository.SYSTEM, "Booking confirmed · $ref", ChatMessage.Kind.SYSTEM)
+            money.postDm(row.renterHandle, row.ownerHandle, row.ownerHandle, "Pickup point · ${MoneyRepository.pickupAddress(row.ownerHandle)}", ChatMessage.Kind.LOCATION)
         }
         return true
     }
 
-    /** S-28 — Update: decline, refunding the renter. */
+    /** Decline a request, refunding the renter in full. */
     suspend fun decline(ref: String) {
         val row = db.money().booking(ref) ?: return
         if (row.status != BookingStatus.REQUESTED) return
-        val now = DemoClock.nowMillis()
+        val now = AppClock.nowMillis()
         val item = store.item(row.listingId)
+        val owner = store.person(row.ownerHandle).name.substringBefore(' ')
         db.withTransaction {
             db.money().upsertBooking(row.copy(status = BookingStatus.DECLINED, respondBy = null, updatedAt = now))
-            if (row.renterHandle == Seed.ME) {
-                db.money().insertTxn(WalletTxnEntity(label = "Refund · $ref declined", amount = row.total, createdAt = now))
-                money.notify(NotificationItem.Kind.BOOKING, "Kavitha declined your request", "${item?.title ?: ref} · ${lkr(row.total)} refunded", "s31", ref)
+            if (row.paymentMethod == MoneyRepository.PAY_WALLET) {
+                val available = db.discovery().profileNow(row.renterHandle)?.walletAvailable ?: 0
+                db.money().setWalletAvailable(row.renterHandle, available + row.total)
             }
+            db.money().insertTxn(WalletTxnEntity(handle = row.renterHandle, label = "Refund · $ref declined", amount = row.total, createdAt = now))
+            money.notify(row.renterHandle, NotificationItem.Kind.BOOKING, "$owner declined your request", "${item?.title ?: ref} · ${lkr(row.total)} refunded", "s31", ref)
+            money.postDm(row.renterHandle, row.ownerHandle, MoneyRepository.SYSTEM, "Request declined · $ref", ChatMessage.Kind.SYSTEM)
         }
     }
 
-    // ============================================================ S-25 / S-26 listing
+    // ============================================================ listings
 
     val draftListing: StateFlow<GearItem?> = combine(session.session, store.allItems) { s, items ->
         s.draftListingId?.let { id -> items.firstOrNull { it.id == id } }
@@ -562,35 +667,47 @@ class ExchangeRepository(
         return "L-$n"
     }
 
+    /** Market rates for one sport: what owners nearby charge a day for it. */
+    data class Market(val count: Int, val low: Int, val median: Int, val high: Int, val suggested: Int)
+
+    fun marketFor(sport: String, excluding: String? = null): Market {
+        val prices = store.allItems.value
+            .filter { it.sport == sport && it.status == ListingStatus.PUBLISHED && it.owner.handle != me && it.id != excluding }
+            .map { it.pricePerDay }.sorted()
+        if (prices.isEmpty()) return Market(0, 500, 1_000, 2_000, 1_000)
+        fun at(q: Double) = prices[((prices.size - 1) * q).toInt()]
+        val median = at(0.5)
+        return Market(prices.size, prices.first(), median, prices.last(), median / 100 * 100)
+    }
+
     /**
-     * Create a new listing as a draft, owned by whoever started it: Kavitha from
-     * the owner dashboard, the renter from their own gear closet.
+     * Create a new listing as a draft, owned by the signed-in member — from the
+     * owner dashboard, or from an item in their gear closet.
      */
-    suspend fun startListing(owner: String, fromClosetId: Long? = null): String {
+    suspend fun startListing(fromClosetId: Long? = null, sport: String? = null): String {
         val closet = fromClosetId?.let { dao.closetItem(it) }
         val id = nextListingId()
-        val now = DemoClock.nowMillis()
-        val sport = closet?.sport ?: "Surfing"
-        val title = closet?.title ?: "New surfboard"
-        val code = (title.filter(Char::isLetter).take(2).uppercase().ifEmpty { "GL" }) + "-" + (1000 + (id.hashCode() and 0x7fff) % 9000)
+        val now = AppClock.nowMillis()
+        val kind = closet?.sport ?: sport ?: "Surfing"
+        val title = closet?.title ?: ""
+        val market = marketFor(kind)
         db.discovery().upsertListing(
             ListingEntity(
                 id = id,
-                title = title,
-                shortTitle = closet?.shortTitle ?: title,
-                code = closet?.code ?: code,
+                title = title.ifEmpty { "New ${kind.lowercase(Locale.ENGLISH)} listing" },
+                shortTitle = closet?.shortTitle ?: title.ifEmpty { "New listing" },
+                code = closet?.code ?: freeCode(title.ifEmpty { kind }),
                 sizeLabel = closet?.sizeLabel ?: "—",
                 grade = closet?.grade ?: Grade.B,
-                pricePerDay = Demo.SUGGESTED_PRICE,
-                distanceKm = if (owner == Seed.ME) 0.0 else 2.4,
-                photos = closet?.photoKey?.let(::listOf) ?: emptyList(),
-                ownerHandle = owner,
+                pricePerDay = market.suggested,
+                distanceKm = if (me == Seed.ME) 0.6 else (1.0 + (id.hashCode() and 0x7) * 0.4),
+                photos = closet?.photoKey?.takeIf(Photos::isFile)?.let(::listOf) ?: emptyList(),
+                ownerHandle = me,
                 fit = Fit.GOOD,
-                sport = sport,
+                sport = kind,
                 instantBook = false,
                 delivery = false,
-                deposit = 25_000,
-                saved = false,
+                deposit = (market.suggested * 8 / 1000 * 1000).coerceAtLeast(2_000),
                 status = ListingStatus.DRAFT,
                 units = 1,
                 volumeL = null,
@@ -600,10 +717,11 @@ class ExchangeRepository(
                 excluded = emptyList(),
                 conditionPhotos = emptyList(),
                 conditionNote = "New listing",
-                conditionDate = dayMonth(DemoClock.today) + " " + DemoClock.today.year,
+                conditionDate = dayMonth(AppClock.today) + " " + AppClock.today.year,
                 extras = emptyList(),
                 discounts = Demo.durationDiscounts.map { it.third },
                 waiveDepositWithPlus = false,
+                description = "",
                 createdAt = now,
                 sortOrder = 100 + store.listingRows.value.size,
             ),
@@ -613,7 +731,15 @@ class ExchangeRepository(
         return id
     }
 
-    /** Edit an existing listing through the same two screens (the dashboard's insights). */
+    /** An item code nobody else's tag uses: two letters from the title, four digits. */
+    private suspend fun freeCode(title: String): String {
+        val letters = title.filter(Char::isLetter).take(2).uppercase(Locale.ENGLISH).padEnd(2, 'G')
+        var n = 1000 + (title.hashCode() and 0x7fff) % 9000
+        while (db.discovery().codeCount("$letters-$n") > 0) n = if (n >= 9999) 1000 else n + 1
+        return "$letters-$n"
+    }
+
+    /** Edit an existing listing through the same two screens. */
     fun editListing(id: String) = session.selectDraft(id)
 
     private suspend fun editDraft(change: (ListingEntity) -> ListingEntity) = edits.withLock {
@@ -623,74 +749,97 @@ class ExchangeRepository(
     }
 
     /**
-     * S-25 — Create a photo in one of the seven slots (the guided angles). The
-     * first photo is the item's own, so the hero is the thing being listed.
+     * Put a photo in one of the seven slots — the angles the handover checks.
+     * The first photo is the hero, so it is the thing being listed.
      */
-    suspend fun addPhoto(slot: Int) = edits.withLock {
-        val id = session.draftListingId ?: return@withLock
-        val row = db.discovery().listing(id) ?: return@withLock
-        val key = if (row.photos.isEmpty()) firstPhotoFor(row)
-        else Photos.sampleFrame[Demo.captureAngles[slot].label] ?: "cond_1"
+    suspend fun setPhoto(slot: Int, photoKey: String) = editDraft { row ->
         val photos = row.photos.toMutableList()
-        if (slot < photos.size) photos[slot] = key else photos.add(key)
-        db.discovery().upsertListing(row.copy(photos = photos))
+        if (slot < photos.size) photos[slot] = photoKey else photos.add(photoKey)
+        row.copy(photos = photos, conditionPhotos = photos.take(3), conditionDate = dayMonth(AppClock.today) + " " + AppClock.today.year)
     }
 
-    private suspend fun firstPhotoFor(row: ListingEntity): String =
-        dao.closetForListing(row.id)?.photoKey
-            ?: if (row.sport == "Surfing") "torq_1" else "sport_" + row.sport.lowercase()
-
-    /** S-25 — Delete a photo. The rest close up behind it. */
-    suspend fun removePhoto(slot: Int) = editDraft { row ->
-        if (slot >= row.photos.size) row else row.copy(photos = row.photos.toMutableList().also { it.removeAt(slot) })
+    /** Delete a photo. The rest close up behind it. Returns the key removed. */
+    suspend fun removePhoto(slot: Int): String? {
+        var removed: String? = null
+        editDraft { row ->
+            if (slot >= row.photos.size) row else {
+                val photos = row.photos.toMutableList()
+                removed = photos.removeAt(slot)
+                row.copy(photos = photos, conditionPhotos = photos.take(3))
+            }
+        }
+        return removed
     }
 
     /**
-     * S-25 — Update the title (the short form is what cards and tags print) and
-     * the size printed on the gear tag, together in one write (D-15).
+     * The title (the short form is what cards and tags print), the size on the
+     * tag, the sport, the grade and the description — one write (D-15).
      */
-    suspend fun setDetails(title: String, size: String) = editDraft { row ->
+    suspend fun setDetails(title: String, size: String, sport: String? = null, grade: Grade? = null, description: String? = null) = editDraft { row ->
         val clean = title.trim().ifEmpty { row.title }
         row.copy(
             title = clean,
             shortTitle = clean.take(28),
-            sizeLabel = size.trim().ifEmpty { row.sizeLabel }.uppercase(java.util.Locale.UK),
+            sizeLabel = size.trim().ifEmpty { row.sizeLabel }.uppercase(Locale.ENGLISH),
+            sport = sport ?: row.sport,
+            grade = grade ?: row.grade,
+            description = description?.trim() ?: row.description,
+            fit = if ((sport ?: row.sport) in setOf("Camping", "Trekking", "Badminton", "Football")) Fit.UNKNOWN else Fit.GOOD,
         )
     }
 
-    /** S-26 — Update the daily rate. */
-    suspend fun setPrice(price: Int) = editDraft { it.copy(pricePerDay = price.coerceIn(200, 20_000)) }
+    suspend fun setPrice(price: Int) = editDraft { it.copy(pricePerDay = price.coerceIn(100, 20_000)) }
 
-    /** S-26 — Update a duration discount. */
+    suspend fun setDeposit(deposit: Int) = editDraft { it.copy(deposit = deposit.coerceIn(0, 200_000)) }
+
     suspend fun setDiscount(index: Int, on: Boolean) = editDraft { row ->
         val d = row.discounts.toMutableList().also { while (it.size < 3) it.add(false) }
         d[index] = on
         row.copy(discounts = d)
     }
 
-    /** S-26 — Update. */
     suspend fun setWaiveDeposit(waive: Boolean) = editDraft { it.copy(waiveDepositWithPlus = waive) }
 
-    /** S-25 "Save draft" — Update: nothing to change, but the timestamp records the save. */
+    suspend fun setInstantBook(on: Boolean) = editDraft { it.copy(instantBook = on) }
+
+    suspend fun setDelivery(on: Boolean) = editDraft { it.copy(delivery = on) }
+
+    /** "Save draft" — the timestamp records the save. */
     suspend fun saveDraft() = editDraft { it.copy(createdAt = it.createdAt) }
 
-    /**
-     * S-26 — Update: publish. A water-sport listing goes to the front of the
-     * "New in surfing" rail, and a closet item is marked as listed.
-     */
+    /** Publish. A closet item is marked as listed, and its swap matches can be found. */
     suspend fun publish(): String? {
         val id = session.draftListingId ?: return null
         val row = db.discovery().listing(id) ?: return null
-        val wasDraft = row.status == ListingStatus.DRAFT
         db.withTransaction {
-            db.discovery().upsertListing(row.copy(status = ListingStatus.PUBLISHED))
-            if (wasDraft && row.sport in setOf("Surfing", "SUP", "Kayaking")) {
-                db.discovery().shiftRail("surf")
-                db.discovery().upsertRailEntry(RailEntryEntity("surf", id, 0))
-            }
+            db.discovery().upsertListing(row.copy(status = ListingStatus.PUBLISHED, createdAt = if (row.status == ListingStatus.DRAFT) AppClock.nowMillis() else row.createdAt))
             dao.closetForListing(id)?.let { dao.upsertClosetItem(it.copy(listed = true)) }
         }
         return id
+    }
+
+    /** Pause a published listing (out of search, bookings kept), or put it back. */
+    suspend fun setPaused(id: String, paused: Boolean) {
+        val row = db.discovery().listing(id) ?: return
+        if (row.ownerHandle != me || row.status == ListingStatus.DRAFT) return
+        db.discovery().setListingStatus(id, if (paused) ListingStatus.PAUSED else ListingStatus.PUBLISHED)
+    }
+
+    /**
+     * Delete one of the member's listings. Refused while a booking still holds
+     * dates on it, because the renter's record would lose its gear.
+     */
+    suspend fun deleteListing(id: String): Boolean {
+        val row = db.discovery().listing(id) ?: return false
+        if (row.ownerHandle != me) return false
+        val live = store.bookingRows.value.any { it.listingId == id && it.status.holdsDates }
+        if (live) return false
+        db.withTransaction {
+            db.discovery().deleteListing(id)
+            dao.closetForListing(id)?.let { dao.upsertClosetItem(it.copy(listingId = null, listed = false)) }
+        }
+        if (session.draftListingId == id) session.selectDraft(null)
+        return true
     }
 
     /** Delete a draft that was never published. */
@@ -705,43 +854,47 @@ class ExchangeRepository(
         session.selectDraft(null)
     }
 
-    // ============================================================ S-36 closet
+    // ============================================================ the gear closet
 
     val closet: StateFlow<List<ClosetItem>> = store.closetRows.map { rows ->
-        val now = DemoClock.nowMillis()
+        val now = AppClock.nowMillis()
         rows.map {
-            ClosetItem(it.id, it.title, it.shortTitle, Photos.res(it.photoKey), it.sport, it.sizeLabel, it.grade, it.code, it.listed, it.listingId, (now - it.idleSince) / MoneyRepository.DAY_MS)
+            ClosetItem(it.id, it.title, it.shortTitle, it.photoKey, it.sport, it.sizeLabel, it.grade, it.code, it.listed, it.listingId, (now - it.idleSince) / MoneyRepository.DAY_MS)
         }
     }.hot(emptyList())
 
-    /** S-36 — Create a closet item. */
-    suspend fun addClosetItem(title: String, sport: String, sizeLabel: String, grade: Grade): Long {
+    suspend fun addClosetItem(title: String, sport: String, sizeLabel: String, grade: Grade, photoKey: String? = null): Long {
         val clean = title.trim().ifEmpty { "Untitled gear" }
         return dao.insertClosetItem(
             ClosetItemEntity(
+                ownerHandle = me,
                 title = clean,
                 shortTitle = clean.take(28),
-                photoKey = "sport_" + sport.lowercase().replace(' ', '_'),
+                photoKey = photoKey ?: Photos.forSport(sport),
                 sport = sport,
-                sizeLabel = sizeLabel.trim().ifEmpty { "—" }.uppercase(java.util.Locale.UK),
+                sizeLabel = sizeLabel.trim().ifEmpty { "—" }.uppercase(Locale.ENGLISH),
                 grade = grade,
-                code = (clean.filter(Char::isLetter).take(2).uppercase().ifEmpty { "GL" }) + "-" + (1000 + (clean.hashCode() and 0x7fff) % 9000),
+                code = freeCode(clean),
                 listed = false,
                 listingId = null,
-                idleSince = DemoClock.nowMillis(),
-                position = dao.maxClosetPosition() + 1,
+                idleSince = AppClock.nowMillis(),
+                position = dao.maxClosetPosition(me) + 1,
             ),
         )
     }
 
-    /** S-36 — Update a closet item's details. */
-    suspend fun updateClosetItem(id: Long, title: String, sizeLabel: String, grade: Grade) {
+    suspend fun updateClosetItem(id: Long, title: String, sizeLabel: String, grade: Grade, photoKey: String? = null) {
         val row = dao.closetItem(id) ?: return
         val clean = title.trim().ifEmpty { row.title }
-        dao.upsertClosetItem(row.copy(title = clean, shortTitle = clean.take(28), sizeLabel = sizeLabel.trim().ifEmpty { row.sizeLabel }.uppercase(java.util.Locale.UK), grade = grade))
+        dao.upsertClosetItem(
+            row.copy(
+                title = clean, shortTitle = clean.take(28),
+                sizeLabel = sizeLabel.trim().ifEmpty { row.sizeLabel }.uppercase(Locale.ENGLISH),
+                grade = grade, photoKey = photoKey ?: row.photoKey,
+            ),
+        )
     }
 
-    /** S-36 — Delete. Returns the row so the toast can offer undo. */
     suspend fun deleteClosetItem(id: Long): ClosetItemEntity? {
         val row = dao.closetItem(id) ?: return null
         dao.deleteClosetItem(id)

@@ -33,6 +33,10 @@ import java.io.FileOutputStream
  */
 abstract class FunctionalTest {
 
+    private companion object {
+        val FRAMES = listOf("torq_2", "torq_5", "cond_3", "cond_1", "torq_4", "torq_4", "cond_2")
+    }
+
     @Suppress("DEPRECATION") // the v2 rule queues coroutines instead of running them at once; these tests rely on the latter
     @get:Rule
     val compose = createEmptyComposeRule()
@@ -44,7 +48,19 @@ abstract class FunctionalTest {
 
     @Before
     fun resetData() {
+        // The cases were written for Wed 5 Aug 2026, 09:14, and the sample
+        // marketplace is generated relative to "now", so the clock is stood at
+        // that moment (and runs on from it) before the reseed: "8 – 10 Aug",
+        // a hold on 14–16 Aug, a countdown, all land where the cases expect.
+        val started = System.currentTimeMillis()
+        val anchor = com.gearloop.app.data.AppClock.toMillis(java.time.LocalDateTime.of(2026, 8, 5, 9, 14))
+        com.gearloop.app.data.AppClock.realMillis = { anchor + (System.currentTimeMillis() - started) }
         runBlocking { c.demo.reset() }
+        // The capture screens ask for the camera and location as they open; a
+        // system prompt over the app would take the screen away from the test.
+        val ui = InstrumentationRegistry.getInstrumentation().uiAutomation
+        listOf(android.Manifest.permission.CAMERA, android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION)
+            .forEach { runCatching { ui.grantRuntimePermission(app.packageName, it) } }
         // Short toasts, so a confirmation never sits over the next control tapped.
         c.toaster.displayMs = 250
         c.toaster.undoDisplayMs = 400
@@ -53,6 +69,7 @@ abstract class FunctionalTest {
     @After
     fun closeApp() {
         scenario?.close()
+        com.gearloop.app.data.AppClock.realMillis = System::currentTimeMillis
         c.toaster.displayMs = 3_000
         c.toaster.undoDisplayMs = 5_000
     }
@@ -67,8 +84,40 @@ abstract class FunctionalTest {
     protected fun book(listingId: String = "torq"): String = runBlocking {
         c.money.startBooking(listingId)
         c.money.signWaiver(com.gearloop.app.data.Demo.nirmal.name)
-        requireNotNull(c.money.confirmDraft()) { "$listingId should be bookable on its default dates" }
+        when (val result = c.money.confirmDraft()) {
+            is com.gearloop.app.data.repo.MoneyRepository.ConfirmResult.Booked -> result.ref
+            else -> error("$listingId should be bookable on its default dates, got $result")
+        }
     }
+
+    /** The seven angles for [ref]'s gear, as the capture screen lists them. */
+    protected fun anglesOf(ref: String): List<String> = runBlocking {
+        val booking = requireNotNull(c.db.money().booking(ref))
+        val listing = requireNotNull(c.db.discovery().listing(booking.listingId))
+        com.gearloop.app.data.CaptureGuide.anglesFor(listing.sport)
+    }
+
+    /**
+     * Passing frames for [angles] of [ref] in [phase], as the shutter makes
+     * them, from the bundled condition photographs: a test can't point a camera.
+     */
+    protected fun shoot(ref: String, phase: com.gearloop.app.data.Phase, angles: List<String> = anglesOf(ref)) = runBlocking {
+        c.evidence.startCapture(phase)
+        angles.forEachIndexed { i, angle -> c.evidence.capture(ref, phase, angle, FRAMES[i % FRAMES.size]) }
+    }
+
+    /**
+     * How many listings S-05 shows with the filters [configure] sets, worked out
+     * with the same filter the screen applies, so a test follows the
+     * marketplace rather than pinning a count the seed happened to give.
+     */
+    protected fun resultCount(configure: (com.gearloop.app.data.SearchFilters) -> Unit = {}): Int {
+        until { c.discovery.searchable.value.isNotEmpty() }
+        return com.gearloop.app.data.SearchFilters().also(configure).apply(c.discovery.searchable.value).size
+    }
+
+    /** `7 results`, `1 result`, as S-05 prints a count. */
+    protected fun resultsLabel(n: Int): String = if (n == 1) "1 result" else "$n results"
 
     /** Open the app on [route], as `adb shell am start --es screen <route>` does. */
     protected fun launch(route: String) {
@@ -112,8 +161,32 @@ abstract class FunctionalTest {
 
     protected fun tapText(value: String, substring: Boolean = false) = text(value, substring).tap()
 
-    protected fun waitForText(value: String, substring: Boolean = false, timeoutMs: Long = 6_000) =
-        until(timeoutMs) { exists(value, substring) }
+    protected fun waitForText(value: String, substring: Boolean = false, timeoutMs: Long = 6_000) {
+        try {
+            until(timeoutMs) { exists(value, substring) }
+        } catch (e: androidx.compose.ui.test.ComposeTimeoutException) {
+            throw AssertionError("Never saw \"$value\". On screen: ${onScreen().joinToString(" | ")}", e)
+        }
+    }
+
+    /** Every string on screen, for a failure message that says what was there instead. */
+    protected fun onScreen(): List<String> = runCatching {
+        compose.onAllNodes(androidx.compose.ui.test.SemanticsMatcher.keyIsDefined(androidx.compose.ui.semantics.SemanticsProperties.Text), useUnmergedTree = true)
+            .fetchSemanticsNodes()
+            .flatMap { node -> node.config[androidx.compose.ui.semantics.SemanticsProperties.Text].map { it.text } }
+            .distinct()
+            .take(80)
+    }.getOrDefault(emptyList())
+
+    /** Move the clock to [at], from where it runs on in real time. */
+    protected fun clockAt(at: java.time.LocalDateTime) {
+        val started = System.currentTimeMillis()
+        val anchor = com.gearloop.app.data.AppClock.toMillis(at)
+        com.gearloop.app.data.AppClock.realMillis = { anchor + (System.currentTimeMillis() - started) }
+    }
+
+    /** Sign in as [handle], as the account switcher does, before a screen is launched. */
+    protected fun signInAs(handle: String) = runBlocking { c.session.signIn(handle) }
 
     /**
      * A full-screen capture, status bar included, for the report. Saved in the

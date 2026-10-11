@@ -3,6 +3,7 @@ package com.gearloop.app.data.db
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.gearloop.app.data.AccountRole
 import com.gearloop.app.data.BookingStatus
 import com.gearloop.app.data.ChatMessage
 import com.gearloop.app.data.ClaimStatus
@@ -21,24 +22,42 @@ import com.gearloop.app.data.VerificationStep
 /*
  * The tables.
  *
- * One file, grouped by the member whose interfaces own each table, so the schema
- * can be read in the order the report presents it:
+ * Every member has an account, and everything that belongs to one member —
+ * their profile, wallet, notifications, closet, saved gear, trip, alerts,
+ * verification steps and badges — carries that member's handle, so the phone
+ * can hold several accounts and each one sees only its own. What two members
+ * share — a booking, a swap, a claim, a conversation — names both of them.
  *
- *   M1 Fit & Discovery       person, profile, sport_interest, search_prefs,
- *                            listing, rail_entry, review, trip, trip_item,
- *                            search_alert
- *   M2 Money & Commitment    booking, wallet_txn, notification, message, claim
- *   M3 Evidence & Trust      capture, damage_mark, verification_step, badge
- *   M4 Exchange & Supply     swap_match, swap_proposal, cycle_member,
+ *   accounts                 account, person, profile
+ *   discovery                sport_interest, search_prefs, listing, saved_listing,
+ *                            review, trip, trip_item, search_alert
+ *   money                    booking, wallet_txn, notification, message, claim
+ *   evidence & trust         capture, damage_mark, verification_step, badge
+ *   exchange & supply        swap_match, swap_proposal, cycle_member,
  *                            calendar_block, owner_task, closet_item
- *   shared                   session
+ *   this device              session
  *
- * Times are epoch millis on the [com.gearloop.app.data.DemoClock]; days are
+ * Times are epoch millis on the [com.gearloop.app.data.AppClock]; days are
  * epoch days, because a booking covers whole days and a day compares cleanly.
  */
 
-// ============================================================ M1 · discovery
+// ============================================================ accounts
 
+/** How a member signs in. The password is never stored, only its salted hash. */
+@Entity(tableName = "account", indices = [Index(value = ["email"], unique = true)])
+data class AccountEntity(
+    @PrimaryKey val handle: String,
+    /** Lower-cased, so sign-in is not case sensitive. */
+    val email: String,
+    val passwordHash: String,
+    val salt: String,
+    val phone: String?,
+    val role: AccountRole,
+    val createdAt: Long,
+    val lastLoginAt: Long?,
+)
+
+/** A member as other members see them. */
 @Entity(tableName = "person")
 data class PersonEntity(
     @PrimaryKey val handle: String,
@@ -57,12 +76,11 @@ data class PersonEntity(
     val verifiedSteps: Int = 0,
 )
 
-/** The signed-in renter. One row. */
+/** A member's own settings and measurements. One row per account. */
 @Entity(tableName = "profile")
 data class ProfileEntity(
-    @PrimaryKey val id: Int = 1,
-    val handle: String,
-    /** S-01: 0 rent, 1 earn, 2 swap, 3 all of it. */
+    @PrimaryKey val handle: String,
+    /** 0 rent, 1 earn, 2 swap, 3 all of it. */
     val intent: Int,
     val heightCm: Int?,
     val weightKg: Int?,
@@ -71,18 +89,27 @@ data class ProfileEntity(
     val couponUsed: Boolean,
     val walletAvailable: Int,
     val address: String?,
+    /** The three getting-started screens have been finished or skipped. */
+    val onboarded: Boolean,
+    /** The saved card: brand and last four digits only, never the number. */
+    val cardBrand: String?,
+    val cardLast4: String?,
+    val cardExpiry: String?,
 )
 
-@Entity(tableName = "sport_interest")
+// ============================================================ discovery
+
+@Entity(tableName = "sport_interest", primaryKeys = ["handle", "sport"])
 data class SportInterestEntity(
-    @PrimaryKey val sport: String,
+    val handle: String,
+    val sport: String,
     val addedAt: Long,
 )
 
 /** The filter sheet's last state, so it survives the app being closed. */
 @Entity(tableName = "search_prefs")
 data class SearchPrefsEntity(
-    @PrimaryKey val id: Int = 1,
+    @PrimaryKey val handle: String,
     val fitOnly: Boolean,
     val instantOnly: Boolean,
     val delivery: Boolean,
@@ -92,6 +119,7 @@ data class SearchPrefsEntity(
     val query: String,
     val lengths: List<String>,
     val grades: List<String>,
+    val sports: List<String>,
 )
 
 @Entity(tableName = "listing", indices = [Index("ownerHandle"), Index("status")])
@@ -113,7 +141,6 @@ data class ListingEntity(
     val instantBook: Boolean,
     val delivery: Boolean,
     val deposit: Int,
-    val saved: Boolean,
     val status: ListingStatus,
     val units: Int,
     val volumeL: Int?,
@@ -129,23 +156,24 @@ data class ListingEntity(
     val extras: List<String>,
     val discounts: List<Boolean>,
     val waiveDepositWithPlus: Boolean,
+    val description: String,
     val createdAt: Long,
     val sortOrder: Int,
 )
 
-/** Which listings the home screen's rails show, and in what order. */
-@Entity(tableName = "rail_entry", primaryKeys = ["rail", "listingId"])
-data class RailEntryEntity(
-    val rail: String,
+/** A listing a member has hearted. */
+@Entity(tableName = "saved_listing", primaryKeys = ["handle", "listingId"])
+data class SavedListingEntity(
+    val handle: String,
     val listingId: String,
-    val position: Int,
+    val savedAt: Long,
 )
 
 @Entity(tableName = "review", indices = [Index("listingId"), Index("subjectHandle")])
 data class ReviewEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val listingId: String,
-    /** The owner being reviewed. */
+    /** The member being reviewed. */
     val subjectHandle: String,
     val authorHandle: String,
     val date: String,
@@ -159,7 +187,7 @@ data class ReviewEntity(
 
 @Entity(tableName = "trip")
 data class TripEntity(
-    @PrimaryKey val id: Int = 1,
+    @PrimaryKey val handle: String,
     val destination: String,
     val startDay: Long,
     val endDay: Long,
@@ -167,9 +195,10 @@ data class TripEntity(
     val sports: List<String>,
 )
 
-@Entity(tableName = "trip_item")
+@Entity(tableName = "trip_item", indices = [Index("handle")])
 data class TripItemEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val handle: String,
     /** OWN, RENT or ADD. */
     val section: String,
     val label: String,
@@ -182,17 +211,18 @@ data class TripItemEntity(
     val position: Int,
 )
 
-/** "Alert me" and "Post what you're looking for", from S-39. */
-@Entity(tableName = "search_alert")
+/** "Alert me" and "Post what you're looking for". */
+@Entity(tableName = "search_alert", indices = [Index("handle")])
 data class SearchAlertEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val handle: String,
     /** ALERT or WANTED. */
     val kind: String,
     val summary: String,
     val createdAt: Long,
 )
 
-// ============================================================ M2 · money
+// ============================================================ money
 
 @Entity(
     tableName = "booking",
@@ -209,6 +239,7 @@ data class BookingEntity(
     val protection: Protection,
     val includeExtras: Boolean,
     val coupon: Int,
+    /** 0 card, 1 GearLoop wallet, 2 cash at pickup. */
     val paymentMethod: Int,
     val waiverName: String?,
     val waiverAt: Long?,
@@ -223,10 +254,14 @@ data class BookingEntity(
     val respondBy: Long?,
     val checklist: List<Int>,
     val returnChecklist: List<Int>,
+    /** When the gear tag was checked against the booking at pickup. */
     val handshakeRenterAt: Long?,
     val handshakeOwnerAt: Long?,
     val renterSignedAt: Long?,
     val ownerSignedAt: Long?,
+    /** The two signatures on the pickup record, as drawn on the screen. */
+    val renterSignature: String?,
+    val ownerSignature: String?,
     val returnedAt: Long?,
     val rating: Int?,
     val calendarAdded: Boolean,
@@ -235,17 +270,20 @@ data class BookingEntity(
     val updatedAt: Long,
 )
 
-@Entity(tableName = "wallet_txn")
+@Entity(tableName = "wallet_txn", indices = [Index("handle")])
 data class WalletTxnEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val handle: String,
     val label: String,
     val amount: Int,
     val createdAt: Long,
 )
 
-@Entity(tableName = "notification")
+@Entity(tableName = "notification", indices = [Index("handle")])
 data class NotificationEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    /** Who it is for. */
+    val handle: String,
     val kind: NotificationItem.Kind,
     val title: String,
     val body: String,
@@ -256,12 +294,17 @@ data class NotificationEntity(
     val ref: String?,
 )
 
+/**
+ * One message. A conversation between two members is keyed by both handles
+ * (see `MoneyRepository.dmKey`); a swap negotiation by its proposal reference.
+ */
 @Entity(tableName = "message", indices = [Index("threadId")])
 data class MessageEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val threadId: String,
+    /** Who sent it; [com.gearloop.app.data.repo.MoneyRepository.SYSTEM] for booking events. */
+    val fromHandle: String,
     val body: String,
-    val fromMe: Boolean,
     val kind: ChatMessage.Kind,
     val createdAt: Long,
 )
@@ -283,13 +326,15 @@ data class ClaimEntity(
     val respondBy: Long,
     val renterStatement: String?,
     val renterEvidence: String?,
+    /** Photos the renter added to their side of the claim. */
+    val renterPhotos: List<String>,
     val award: Int?,
     val rationale: String?,
     val decidedAt: Long?,
     val decidedBy: String?,
 )
 
-// ============================================================ M3 · evidence
+// ============================================================ evidence
 
 /** One frame of the guided condition record. */
 @Entity(tableName = "capture", indices = [Index(value = ["bookingRef", "phase", "angle"], unique = true)])
@@ -298,12 +343,14 @@ data class CaptureEntity(
     val bookingRef: String,
     val phase: Phase,
     val angle: String,
+    /** The photo taken with the camera, see [com.gearloop.app.data.PhotoStore]. */
     val photoKey: String,
     /** Framing passed the capture-time check (FR-08). */
     val ok: Boolean,
     val capturedAt: Long,
-    val latitude: Double,
-    val longitude: Double,
+    /** Where it was taken, when the phone allowed the app to know. */
+    val latitude: Double?,
+    val longitude: Double?,
 )
 
 @Entity(tableName = "damage_mark", indices = [Index("bookingRef")])
@@ -324,29 +371,36 @@ data class DamageMarkEntity(
     val resolved: Boolean,
 )
 
-@Entity(tableName = "verification_step")
+@Entity(tableName = "verification_step", primaryKeys = ["handle", "position"])
 data class VerificationStepEntity(
-    @PrimaryKey val position: Int,
+    val handle: String,
+    val position: Int,
     val title: String,
     val unlocks: String,
     val state: VerificationStep.State,
     val completedAt: Long?,
+    /** What the step recorded: a phone number, a photo of the ID, the address. */
+    val detail: String?,
 )
 
-@Entity(tableName = "badge")
+@Entity(tableName = "badge", primaryKeys = ["handle", "name"])
 data class BadgeEntity(
-    @PrimaryKey val name: String,
+    val handle: String,
+    val name: String,
     val earned: Boolean,
     /** Shown on the public profile. */
     val featured: Boolean,
     val position: Int,
 )
 
-// ============================================================ M4 · exchange & supply
+// ============================================================ exchange & supply
 
-@Entity(tableName = "swap_match")
+/** A trade the matcher found for one member's gear. */
+@Entity(tableName = "swap_match", indices = [Index("handle")])
 data class SwapMatchEntity(
     @PrimaryKey val id: String,
+    /** Whose feed it is in. */
+    val handle: String,
     val giveListingId: String,
     val getListingId: String,
     val giveValue: Int,
@@ -361,11 +415,14 @@ data class SwapMatchEntity(
 data class SwapProposalEntity(
     @PrimaryKey val ref: String,
     val matchId: String?,
+    /** Who made the offer. [giveListingId] is theirs, [getListingId] is the counterparty's. */
+    val proposerHandle: String,
     val giveListingId: String,
     val getListingId: String,
     val giveValue: Int,
     val getValue: Int,
     val counterpartyHandle: String,
+    /** Cash the proposer adds to their side. */
     val boot: Int,
     val status: ProposalStatus,
     val round: Int,
@@ -395,9 +452,11 @@ data class CalendarBlockEntity(
     val reason: String,
 )
 
-@Entity(tableName = "owner_task")
+@Entity(tableName = "owner_task", indices = [Index("handle")])
 data class OwnerTaskEntity(
     @PrimaryKey val id: String,
+    /** The owner it is for. */
+    val handle: String,
     val severity: NeedsAttention.Severity,
     val title: String,
     val detail: String,
@@ -406,10 +465,11 @@ data class OwnerTaskEntity(
     val position: Int,
 )
 
-/** The renter's own kit, listed or not (S-36). */
-@Entity(tableName = "closet_item")
+/** A member's own kit, listed or not. */
+@Entity(tableName = "closet_item", indices = [Index("ownerHandle")])
 data class ClosetItemEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val ownerHandle: String,
     val title: String,
     val shortTitle: String,
     val photoKey: String,
@@ -424,15 +484,21 @@ data class ClosetItemEntity(
     val position: Int,
 )
 
-// ============================================================ shared
+// ============================================================ this device
 
 /**
- * What the user has selected, persisted so it survives the process being killed
- * — and the anchor that starts the demo clock.
+ * This phone's state: who is signed in, what they have open, and the
+ * appearance setting. One row.
  */
 @Entity(tableName = "session")
 data class SessionEntity(
     @PrimaryKey val id: Int = 1,
+    /** The signed-in member, or null when nobody is. */
+    val currentHandle: String?,
+    /** The welcome pages have been seen on this phone. */
+    val welcomeSeen: Boolean,
+    /** 0 follow the system, 1 light, 2 dark. */
+    val themeMode: Int,
     val listingId: String,
     val bookingRef: String?,
     val proposalRef: String?,
@@ -440,6 +506,5 @@ data class SessionEntity(
     val threadId: String,
     val draftListingId: String?,
     val capturePhase: Phase,
-    val clockAnchor: Long,
     val bookingSeq: Int,
 )

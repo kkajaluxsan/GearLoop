@@ -32,6 +32,14 @@ object Pricing {
 
     fun serviceFeeOn(amount: Int): Int = amount * SERVICE_FEE_PERCENT / 100
 
+    /**
+     * What an item is worth when nobody has valued it: twice the deposit its
+     * owner set, or a month of rent when they asked for none. Claims are capped
+     * against this and swaps are balanced on it, so it must never be zero.
+     */
+    fun estimatedValue(item: GearItem): Int =
+        if (item.deposit > 0) item.deposit * 2 else item.pricePerDay * 30
+
     fun quote(
         item: GearItem,
         days: Int,

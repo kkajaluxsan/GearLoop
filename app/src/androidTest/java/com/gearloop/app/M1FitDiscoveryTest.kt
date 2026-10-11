@@ -1,5 +1,6 @@
 package com.gearloop.app
 
+import com.gearloop.app.data.repo.Seed
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
@@ -8,6 +9,7 @@ import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.gearloop.app.data.Fit
@@ -34,7 +36,7 @@ class M1FitDiscoveryTest : FunctionalTest() {
         shot("s01_intent")
         tapText("Swap gear")
         tapText("Continue")
-        until { db { discovery().profileNow()?.intent } == 2 }
+        until { db { discovery().profileNow(Seed.ME)?.intent } == 2 }
         waitForText("Let's get your sizes right")
     }
 
@@ -48,7 +50,7 @@ class M1FitDiscoveryTest : FunctionalTest() {
         waitForText("L (55–57)")
         shot("s02_fit_profile")
         tapText("Save and continue")
-        until { db { discovery().profileNow()?.heightCm } == 177 }
+        until { db { discovery().profileNow(Seed.ME)?.heightCm } == 177 }
         waitForText("Pick your sports")
     }
 
@@ -57,7 +59,7 @@ class M1FitDiscoveryTest : FunctionalTest() {
     fun tc03_removing_measurements_unknowns_every_verdict() {
         launch("s02")
         tapText("Remove my measurements")
-        until { db { discovery().profileNow()?.heightCm } == null }
+        until { db { discovery().profileNow(Seed.ME)?.heightCm } == null }
         relaunch("s07")
         waitForText("Add your height and weight to get a verdict")
         assertTrue(descExists("Fit verdict: ${Fit.UNKNOWN.label.lowercase()}"))
@@ -78,20 +80,23 @@ class M1FitDiscoveryTest : FunctionalTest() {
     fun tc05_sport_interests_are_created_and_deleted() {
         launch("s03")
         tapText("Trekking")
-        until { db { discovery().hasSport("Trekking") } == 1 }
+        until { db { discovery().hasSport(Seed.ME, "Trekking") } == 1 }
         tapText("Surfing")
-        until { db { discovery().hasSport("Surfing") } == 0 }
-        waitForText("Continue (3 selected)")
+        until { db { discovery().hasSport(Seed.ME, "Surfing") } == 0 }
+        waitForText("(3 selected)", substring = true)
     }
 
     /** TC-06 · S-04 · Read the rails; Update a listing's saved state from its heart. */
     @Test
     fun tc06_home_heart_saves_the_listing() {
         launch("s04")
-        waitForText("This weekend near you".uppercase())
-        compose.onAllNodesWithContentDescription("Save Torq Mod Fish 6'6\"").onFirst().performClick()
-        until { db { discovery().listing("torq")?.saved } == true }
-        // Both rails the Torq is on now show it saved.
+        waitForText("Free near you".uppercase())
+        // The first heart on the page, whichever listing the rails put first.
+        val heart = compose.onAllNodesWithContentDescription("Save ", substring = true).onFirst()
+        val label = heart.fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.ContentDescription].first()
+        val item = c.store.allItems.value.first { "Save ${it.shortTitle}" == label }
+        heart.performClick()
+        until { db { discovery().isSaved(Seed.ME, item.id) } == 1 }
         shot("s04_home_saved")
     }
 
@@ -99,38 +104,51 @@ class M1FitDiscoveryTest : FunctionalTest() {
     @Test
     fun tc07_search_query_filters_and_empties() {
         launch("s05")
-        waitForText("7 results")
+        val everything = resultCount()
+        waitForText(resultsLabel(everything))
         compose.onNode(hasSetTextAction()).performTextInput("kayak")
-        // The kayak is 5.9 km away, outside the default 5 km.
+        waitForText(resultsLabel(resultCount { it.query = "kayak" }))
+        // A query that matches nothing offers a way back rather than a blank page.
+        compose.onNode(hasSetTextAction()).performTextClearance()
+        compose.onNode(hasSetTextAction()).performTextInput("zqxwv")
         waitForText("Nothing matches all of that")
-        // Loosening drops the query before it widens the distance.
+        // Loosening drops the query before anything else.
         tapText("Loosen the tightest filter")
-        waitForText("7 results")
+        waitForText(resultsLabel(everything))
     }
 
     /** TC-08 · S-05 · The order control really reorders; Update saved from a result row. */
     @Test
     fun tc08_search_sorts_and_saves() {
         launch("s05")
-        tapText("Best match")
-        waitForText("Lowest price")
+        // All three orders are chips on show; picking one selects it.
+        text("Best match").assertIsSelected()
+        tapText("Lowest price")
+        text("Lowest price").assertIsSelected()
         shot("s05_results")
-        compose.onAllNodesWithContentDescription("Save SS Ton Willow Bat").onFirst().performClick()
-        until { db { discovery().listing("bat")?.saved } == true }
+        // The first heart in the reordered list, whichever listing is cheapest.
+        val heart = compose.onAllNodesWithContentDescription("Save ", substring = true).onFirst()
+        val label = heart.fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.ContentDescription].first()
+        val item = c.store.allItems.value.first { "Save ${it.shortTitle}" == label }
+        heart.performClick()
+        until { db { discovery().isSaved(Seed.ME, item.id) } == 1 }
     }
 
     /** TC-09 · S-06 · Update the filters; they survive a restart; Reset deletes them. */
     @Test
     fun tc09_filters_persist_and_reset_deletes_them() {
         launch("s06")
+        val all = resultCount()
+        val instant = resultCount { it.instantOnly = true }
+        fun show(n: Int) = if (n == 1) "Show 1 result" else "Show $n results"
         compose.onNode(isToggleable() and hasText("Instant book only")).tap()
-        waitForText("Show 3 results")
-        until(8_000) { db { discovery().searchPrefs()?.instantOnly } == true }
+        waitForText(show(instant))
+        until(8_000) { db { discovery().searchPrefs(Seed.ME)?.instantOnly } == true }
         relaunch("s06")
-        waitForText("Show 3 results")
+        waitForText(show(instant))
         tapText("Reset")
-        until(8_000) { db { discovery().searchPrefs() } == null }
-        waitForText("Show 7 results")
+        until(8_000) { db { discovery().searchPrefs(Seed.ME) } == null }
+        waitForText(show(all))
     }
 
     /** TC-10 · S-07 · Read the listing that was opened, with its own live fit reason. */
@@ -150,7 +168,7 @@ class M1FitDiscoveryTest : FunctionalTest() {
         waitForText("LKR 9,576")
         shot("s07_listing")
         tapText("Book instantly")
-        until { db { money().booking("D-torq") } != null }
+        until { db { money().booking("D-torq${Seed.ME}") } != null }
         waitForText("Choose your dates")
     }
 
@@ -169,13 +187,18 @@ class M1FitDiscoveryTest : FunctionalTest() {
     @Test
     fun tc13_trip_planner_updates_and_deletes() {
         launch("s30")
-        waitForText("LKR 29,880")
-        compose.onAllNodesWithContentDescription("Increase")[0].performClick()
-        until { db { discovery().tripNow()?.adults } == 3 }
+        until { c.discovery.trip.value != null }
+        val adults = c.discovery.trip.value!!.adults
+        val renting = c.store.tripItemRows.value.count { it.section == "RENT" }
+        waitForText(com.gearloop.app.data.lkr(c.discovery.trip.value!!.total))
+        compose.onAllNodesWithContentDescription("Increase")[1].performClick() // [0] is the trip's length
+        until { db { discovery().tripNow(Seed.ME)?.adults } == adults + 1 }
+        until { c.discovery.trip.value?.adults == adults + 1 }
+        val before = c.discovery.trip.value!!.total
         tapText("Dry bag 20 L")
-        waitForText("LKR 30,180")
+        waitForText(com.gearloop.app.data.lkr(before + 300))
         compose.onAllNodesWithText("Remove from kit").onFirst().tap()
-        until { c.store.tripItemRows.value.count { it.section == "RENT" } == 3 }
+        until { c.store.tripItemRows.value.count { it.section == "RENT" } == renting - 1 }
         shot("s30_trip")
     }
 
@@ -195,9 +218,10 @@ class M1FitDiscoveryTest : FunctionalTest() {
     fun tc15_recovery_card_loosens_the_live_filters() {
         launch("s39")
         waitForText("Within 25 km")
-        waitForText("9")
+        val wider = resultCount { it.distanceIndex = com.gearloop.app.data.SearchFilters.DISTANCES.lastIndex }
+        waitForText("$wider")
         tapText("Within 25 km")
-        waitForText("9 results")
+        waitForText(resultsLabel(wider))
     }
 
     /** TC-16 · S-42 · Create a review for a finished rental; the histogram moves; Delete it. */

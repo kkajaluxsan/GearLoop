@@ -37,7 +37,7 @@ import com.gearloop.app.container
 import com.gearloop.app.data.BookingStatus
 import com.gearloop.app.data.ChatMessage
 import com.gearloop.app.data.Demo
-import com.gearloop.app.data.DemoClock
+import com.gearloop.app.data.AppClock
 import com.gearloop.app.data.NotificationItem
 import com.gearloop.app.data.repo.Notification
 import com.gearloop.app.nav.Nav
@@ -71,14 +71,18 @@ import com.gearloop.app.ui.vm.gearViewModel
 fun S33MessageThread(nav: Nav) {
     val vm: MoneyViewModel = gearViewModel()
     val thread by vm.thread.collectAsStateWithLifecycle()
-    val threads by vm.threads.collectAsStateWithLifecycle()
     val threadId by vm.threadId.collectAsStateWithLifecycle()
     val header by vm.threadBooking.collectAsStateWithLifecycle()
     val people by vm.people.collectAsStateWithLifecycle()
     var draft by rememberSaveable { mutableStateOf("") }
     var deleting by rememberSaveable { mutableLongStateOf(-1L) }
-    val context = LocalContext.current
     val other = people[threadId]
+    if (threadId.isEmpty()) {
+        GearScreen(appBar = { AppBar(title = "Messages", onBack = { nav.back() }) }) {
+            EmptyState(icon = Lucide.MessageSquare, headline = "No conversation open", body = "Pick one from your messages.", actionLabel = "Open messages", onAction = { nav.tab("inbox") })
+        }
+        return
+    }
     val first = other?.name?.substringBefore(' ') ?: "them"
     val scroll = rememberSavedScrollState()
     // A new message scrolls the thread to the bottom, where it lands.
@@ -88,40 +92,18 @@ fun S33MessageThread(nav: Nav) {
         appBar = {
             AppBar(
                 title = other?.name ?: "Messages",
-                subtitle = other?.let { "Responds in ${it.respondsIn}" },
+                subtitle = other?.respondsIn?.takeIf { it.isNotBlank() }?.let { "Usually replies in $it" },
                 onBack = { nav.back() },
                 actions = {
-                    GearIconButton(Lucide.Phone, "Call $first", {
-                        context.container.toaster.show("Calls go through a masked number once the live service is connected")
-                    }, size = 44.dp)
+                    if (other != null) {
+                        GearIconButton(Lucide.CircleUser, "${other.name}'s profile", { vm.showProfile(other.handle); nav.to("s37") }, size = 44.dp)
+                    }
                 },
             )
         },
-        tabBar = { MainTabBar(nav, MainTab.MESSAGES) },
         contentPadding = 0.dp,
         scrollable = false,
     ) {
-        // Every conversation, so the Messages tab is an inbox rather than one
-        // thread: switching is a tap, not a trip back through a profile.
-        if (threads.size > 1) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberSavedScrollState())
-                    .padding(horizontal = Space.screen, vertical = Space.xs),
-                horizontalArrangement = Arrangement.spacedBy(Space.s),
-            ) {
-                threads.forEach { id ->
-                    val person = people[id] ?: return@forEach
-                    Chip(
-                        person.name.substringBefore(' '),
-                        selected = id == threadId,
-                        onClick = { vm.openThread(id) },
-                    )
-                }
-            }
-            GearDivider()
-        }
         Column(
             Modifier
                 .weight(1f)
@@ -226,7 +208,7 @@ fun S33MessageThread(nav: Nav) {
             destructiveLabel = "Delete",
             onDestructive = { vm.deleteMessage(deleting); deleting = -1L },
         ) {
-            Text("It's removed for both of you.", style = GearType.bodyM, color = GearText.secondary)
+            Text("It's removed from the conversation for both of you.", style = GearType.bodyM, color = GearText.secondary)
         }
     }
 }
@@ -307,8 +289,8 @@ private fun LocationCard(text: String, time: String) {
 /**
  * A contact detail that was masked when it was sent.
  *
- * The number stays masked because it always does — GearLoop routes calls through
- * a masked line, which is the same thing S-13 says beside its Call button.
+ * The number stays masked because it always does: members talk in the thread,
+ * and contact details are never shown.
  */
 @Composable
 private fun RedactedCard(text: String, first: String) {
@@ -324,8 +306,9 @@ private fun RedactedCard(text: String, first: String) {
         VGap(4.dp)
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
             GearIcon(Lucide.Lock, null, size = 12.dp, tint = GearText.tertiary)
+            // There is no Call button to point at, so it points at the thread.
             Text(
-                "Numbers stay masked — use Call to reach $first",
+                "Numbers stay masked. Keep talking to $first here.",
                 style = GearType.bodyS,
                 color = GearText.tertiary,
             )
@@ -344,7 +327,7 @@ fun S38Notifications(nav: Nav) {
     val vm: MoneyViewModel = gearViewModel()
     val exchange: ExchangeSupplyViewModel = gearViewModel()
     val items by vm.notifications.collectAsStateWithLifecycle()
-    val today = DemoClock.today
+    val today = AppClock.today
     val (fresh, older) = items.partition { it.createdAt.toLocalDate() == today }
 
     val open: (Notification) -> Unit = { n ->
@@ -352,7 +335,8 @@ fun S38Notifications(nav: Nav) {
         when (n.route) {
             "s22" -> n.ref?.let(exchange::selectProposal)
             "s34" -> n.ref?.let(vm::selectClaim)
-            "s12", "s13", "s17", "s18", "s31" -> n.ref?.let(vm::selectBooking)
+            "s33" -> n.ref?.let(vm::openThread)
+            "s12", "s13", "s17", "s18", "s18b", "s31" -> n.ref?.let(vm::selectBooking)
         }
         nav.to(n.route)
     }
@@ -369,7 +353,7 @@ fun S38Notifications(nav: Nav) {
         },
     ) {
         if (items.isEmpty()) {
-            EmptyState(icon = Lucide.Bell, headline = "All caught up", body = "Bookings, swaps and payouts will show up here.")
+            EmptyState(icon = Lucide.Bell, headline = "All caught up", body = "Bookings, messages, swaps and payouts will show up here.")
         }
         if (fresh.isNotEmpty()) {
             VGap(Space.s)
@@ -396,6 +380,7 @@ private fun NotificationRow(n: Notification, onOpen: () -> Unit, onDelete: () ->
         NotificationItem.Kind.SAFETY -> Lucide.ShieldAlert to GearColor.Pine900
         NotificationItem.Kind.PAYOUT -> Lucide.Wallet to GearText.primary
         NotificationItem.Kind.REVIEW -> Lucide.Star to GearColor.Warning500
+        NotificationItem.Kind.MESSAGE -> Lucide.MessageSquare to GearColor.Marine500
     }
     val safety = item.kind == NotificationItem.Kind.SAFETY
 

@@ -5,31 +5,47 @@ import com.gearloop.app.data.db.SessionDao
 import com.gearloop.app.data.db.SessionEntity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
- * What the user has selected: the listing on S-07, the booking the handover
- * screens are about, the proposal on S-22, the claim on S-34.
+ * This phone's state: who is signed in, and what they have selected — the
+ * listing on the detail screen, the booking the handover screens are about,
+ * the proposal, the claim, the conversation.
  *
- * Selection happens immediately before navigation — tap a card, open S-07 — so
- * it is held in memory and read synchronously, and the next screen draws the
- * right listing on its first frame. Every change is also written to the
- * database, so the selection survives the process being killed in the middle of
- * a flow, which Android is entitled to do at any time.
+ * Selection happens immediately before navigation — tap a card, open its
+ * screen — so it is held in memory and read synchronously, and the next screen
+ * draws the right thing on its first frame. Every change is also written to the
+ * database, so the selection and the sign-in survive the process being killed,
+ * which Android is entitled to do at any time.
  */
 class SessionStore(private val dao: SessionDao, private val scope: CoroutineScope) {
 
-    private val state = MutableStateFlow(Seed.session(0L))
+    private val state = MutableStateFlow(fresh())
     val session: StateFlow<SessionEntity> = state.asStateFlow()
 
     private val writes = Mutex()
 
+    /** The signed-in member's handle, or "" when nobody is signed in. */
+    val me: StateFlow<String> = state.map { it.currentHandle.orEmpty() }
+        .distinctUntilChanged()
+        .stateIn(scope, SharingStarted.Eagerly, "")
+
+    /** Read synchronously by the write paths; "" when nobody is signed in. */
+    val handle: String get() = state.value.currentHandle.orEmpty()
+
+    val signedIn: Boolean get() = state.value.currentHandle != null
+
     suspend fun load() {
         dao.session()?.let { state.value = it }
+        profile.value = null
     }
 
     fun update(change: (SessionEntity) -> SessionEntity) {
@@ -38,7 +54,7 @@ class SessionStore(private val dao: SessionDao, private val scope: CoroutineScop
         scope.launch { writes.withLock { dao.save(next) } }
     }
 
-    /** Replace outright, waiting for the write — used when the demo is reset. */
+    /** Replace outright, waiting for the write — used when the database is reseeded. */
     suspend fun replace(next: SessionEntity) {
         state.value = next
         profile.value = null
@@ -46,17 +62,41 @@ class SessionStore(private val dao: SessionDao, private val scope: CoroutineScop
     }
 
     /**
-     * Whose public profile S-37 shows: the owner from a listing, or the renter
-     * themself from their own Profile tab, which used to open someone else's
-     * (D-28, DV-34).
-     *
-     * Held in memory only, so the schema stays at version 1. It is chosen the
-     * moment before S-37 opens; if the process dies there, S-37 falls back to
-     * the owner of the listing in view, which is what it always showed.
+     * Whose public profile is open: the owner from a listing, or the member
+     * themself from their own Profile tab. Held in memory only; if the process
+     * dies there, the public profile falls back to the owner of the listing in
+     * view.
      */
     private val profile = MutableStateFlow<String?>(null)
     val profileHandle: StateFlow<String?> = profile.asStateFlow()
     fun selectProfile(handle: String) { profile.value = handle }
+
+    /** Sign in as [handle], clearing whatever the previous member had open. */
+    suspend fun signIn(handle: String) {
+        val next = state.value.copy(
+            currentHandle = handle,
+            welcomeSeen = true,
+            bookingRef = null,
+            proposalRef = null,
+            claimRef = null,
+            draftListingId = null,
+            threadId = "",
+            capturePhase = Phase.PICKUP,
+        )
+        state.value = next
+        profile.value = null
+        writes.withLock { dao.save(next) }
+    }
+
+    suspend fun signOut() {
+        val next = state.value.copy(currentHandle = null, bookingRef = null, proposalRef = null, claimRef = null, draftListingId = null, threadId = "")
+        state.value = next
+        profile.value = null
+        writes.withLock { dao.save(next) }
+    }
+
+    fun markWelcomeSeen() = update { it.copy(welcomeSeen = true) }
+    fun setThemeMode(mode: Int) = update { it.copy(themeMode = mode.coerceIn(0, 2)) }
 
     val listingId: String get() = state.value.listingId
     val bookingRef: String? get() = state.value.bookingRef
@@ -79,5 +119,22 @@ class SessionStore(private val dao: SessionDao, private val scope: CoroutineScop
         val n = state.value.bookingSeq
         update { it.copy(bookingSeq = n + 1) }
         return n
+    }
+
+    companion object {
+        /** A phone nobody has used yet: signed out, welcome pages not seen. */
+        fun fresh() = SessionEntity(
+            currentHandle = null,
+            welcomeSeen = false,
+            themeMode = 0,
+            listingId = "torq",
+            bookingRef = null,
+            proposalRef = null,
+            claimRef = null,
+            threadId = "",
+            draftListingId = null,
+            capturePhase = Phase.PICKUP,
+            bookingSeq = 0,
+        )
     }
 }

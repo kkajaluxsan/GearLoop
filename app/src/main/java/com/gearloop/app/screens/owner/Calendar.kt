@@ -36,7 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gearloop.app.data.BookingStatus
 import com.gearloop.app.data.DayState
-import com.gearloop.app.data.DemoClock
+import com.gearloop.app.data.AppClock
 import com.gearloop.app.data.countdown
 import com.gearloop.app.data.dateRange
 import com.gearloop.app.data.dayMonth
@@ -75,8 +75,9 @@ fun S27MasterCalendar(nav: Nav) {
     // Observed so the timeline redraws when a block or a booking changes.
     val blocks by vm.blocks.collectAsStateWithLifecycle()
     val bookings by vm.bookings.collectAsStateWithLifecycle()
+    val account by vm.account.collectAsStateWithLifecycle()
     var mode by rememberSaveable { mutableIntStateOf(0) }
-    var startDay by rememberSaveable { mutableLongStateOf(DemoClock.today.toEpochDay()) }
+    var startDay by rememberSaveable { mutableLongStateOf(AppClock.today.toEpochDay()) }
     var blocking by rememberSaveable { mutableStateOf(false) }
     val from = LocalDate.ofEpochDay(startDay)
     val days = if (mode == 0) 14 else 7
@@ -86,7 +87,7 @@ fun S27MasterCalendar(nav: Nav) {
         appBar = {
             AppBar(
                 title = "Calendar",
-                subtitle = "KAVITHA SELVAM · OWNER",
+                subtitle = account?.person?.name?.let { "${it.uppercase()} · OWNER" },
                 onBack = { nav.back() },
                 actions = { GearIconButton(Lucide.Inbox, "Requests", { nav.to("s28") }, size = 44.dp) },
             )
@@ -117,6 +118,11 @@ fun S27MasterCalendar(nav: Nav) {
         }
 
         VGap(Space.s)
+        if (units.isEmpty()) {
+            Column(Modifier.padding(horizontal = Space.screen)) {
+                EmptyState(icon = Lucide.CalendarDays, headline = "Nothing listed yet", body = "Each unit you list gets a row here.")
+            }
+        }
         UnitTimeline(units, from, days, blocking, vm, bookings, blocks)
 
         Column(Modifier.padding(horizontal = Space.screen)) {
@@ -125,8 +131,8 @@ fun S27MasterCalendar(nav: Nav) {
 
             conflicts.forEach { c ->
                 VGap(Space.m)
-                val hoursLate = ChronoUnit.HOURS.between(c.late.returnAt, DemoClock.now()).coerceAtLeast(1)
-                val untilNext = ChronoUnit.MILLIS.between(DemoClock.now(), c.next.pickupAt)
+                val hoursLate = ChronoUnit.HOURS.between(c.late.returnAt, AppClock.now()).coerceAtLeast(1)
+                val untilNext = ChronoUnit.MILLIS.between(AppClock.now(), c.next.pickupAt)
                 AccentCard(GearColor.Danger500, Modifier.fillMaxWidth()) {
                     Text("Booking conflict", style = GearType.headingS, color = GearText.primary)
                     VGap(4.dp)
@@ -189,7 +195,7 @@ fun S27MasterCalendar(nav: Nav) {
             VGap(Space.m)
             if (blocking) {
                 Banner(
-                    text = "Block mode: tap a free day to block it, or a blocked day to free it. Booked days can't be blocked.",
+                    text = "Tap a free day to block it, or a blocked day to free it.",
                     kind = BannerKind.INFO,
                 )
                 VGap(Space.s)
@@ -227,7 +233,7 @@ private fun UnitTimeline(
                     Text(
                         "${day.dayOfMonth}",
                         style = GearType.labelXs,
-                        color = if (day == DemoClock.today) GearText.primary else GearText.tertiary,
+                        color = if (day == AppClock.today) GearText.primary else GearText.tertiary,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.width(if (blocking) 44.dp else 26.dp),
                     )
@@ -318,9 +324,10 @@ fun S28RequestsInbox(nav: Nav) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var expanded by rememberSaveable { mutableStateOf(requests.firstOrNull()?.ref) }
     var declining by rememberSaveable { mutableStateOf<String?>(null) }
+    val account by vm.account.collectAsStateWithLifecycle()
 
     GearScreen(
-        appBar = { AppBar(title = "Requests", subtitle = "KAVITHA SELVAM · OWNER", onBack = { nav.back() }) },
+        appBar = { AppBar(title = "Requests", subtitle = account?.person?.name?.let { "${it.uppercase()} · OWNER" }, onBack = { nav.back() }) },
     ) {
         VGap(Space.s)
         SegmentedControl(
@@ -332,7 +339,7 @@ fun S28RequestsInbox(nav: Nav) {
         when (tab) {
             0 -> {
                 if (requests.isEmpty()) {
-                    EmptyState(icon = Lucide.Inbox, headline = "No requests waiting", body = "New requests arrive here with the renter's fit and trust already attached.")
+                    EmptyState(icon = Lucide.Inbox, headline = "No requests waiting", body = "New requests appear here.")
                 }
                 requests.forEach { request ->
                     RequestCard(
@@ -350,7 +357,12 @@ fun S28RequestsInbox(nav: Nav) {
             1 -> {
                 if (upcoming.isEmpty()) EmptyState(icon = Lucide.CalendarDays, headline = "Nothing booked yet", body = "Accepted requests and instant bookings appear here.")
                 upcoming.forEach { b ->
-                    BookingCard(
+                    if (b.status == BookingStatus.RETURNED) {
+                        BookingCard(
+                            b.item, "${b.dates} · ${b.renter.name}", "Back · check it", GearColor.Warning700,
+                            "Check the return", { vm.selectBooking(b.ref); nav.to("s18b") }, reference = b.ref,
+                        )
+                    } else BookingCard(
                         b.item, "${b.dates} · ${b.renter.name}",
                         if (b.status == BookingStatus.ACTIVE) "Out now" else "Confirmed",
                         if (b.status == BookingStatus.ACTIVE) GearColor.Warning700 else GearColor.Success500,
@@ -408,7 +420,7 @@ private fun RequestCard(
 ) {
     val renter = request.renter
     val item = request.item
-    val left = request.respondBy?.let { ChronoUnit.MILLIS.between(DemoClock.now(), it) } ?: 0
+    val left = request.respondBy?.let { ChronoUnit.MILLIS.between(AppClock.now(), it) } ?: 0
     GearCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(Space.cardPadding)) {
             Row(Modifier.fillMaxWidth().clickable(role = Role.Button, onClickLabel = "Trust breakdown", onClick = onToggle), verticalAlignment = Alignment.CenterVertically) {
@@ -497,7 +509,9 @@ private fun RequestCard(
             VGap(Space.sm)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.s)) {
                 GearButton("Decline", onDecline, type = ButtonType.GHOST, size = ButtonSize.S)
-                GearButton("Counter", onMessage, type = ButtonType.SECONDARY, size = ButtonSize.S)
+                // It opens the conversation; "Counter" promised a counter-offer
+                // that a booking request has no way to make.
+                GearButton("Message", onMessage, type = ButtonType.SECONDARY, size = ButtonSize.S, icon = Lucide.MessageSquare)
                 Spacer(Modifier.weight(1f))
                 GearButton("Accept", onAccept, size = ButtonSize.S)
             }

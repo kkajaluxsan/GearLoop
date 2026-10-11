@@ -44,7 +44,7 @@ import java.time.LocalDate
 @RunWith(AndroidJUnit4::class)
 class M2MoneyCommitmentTest : FunctionalTest() {
 
-    private val draftRef = "D-torq"
+    private val draftRef = "D-torq${Seed.ME}"
     private fun aug(day: Int) = LocalDate.of(2026, 8, day).toEpochDay()
     private fun draft() = db { money().booking(draftRef) }
 
@@ -134,8 +134,8 @@ class M2MoneyCommitmentTest : FunctionalTest() {
         until { draft()?.includeExtras == false }
         waitForText("LKR 8,745")
         assertEquals(8_745, draft()!!.total)
-        text("eZ Cash").tap()
-        until { draft()?.paymentMethod == 1 }
+        text("Cash at pickup").tap()
+        until { draft()?.paymentMethod == com.gearloop.app.data.repo.MoneyRepository.PAY_CASH }
     }
 
     /** TC-23 · S-11 · Create the booking: one transaction writes the booking, payment, notification and messages. */
@@ -150,8 +150,9 @@ class M2MoneyCommitmentTest : FunctionalTest() {
         assertEquals(9_240, db { money().booking(ref) }!!.total)
         assertNull(draft())
         assertTrue(db { money().walletTxns().first() }.any { it.label.startsWith("Booking $ref") && it.amount == -9_240 })
-        assertTrue(db { money().notifications().first() }.any { it.title == "Kavitha confirmed your booking" && it.unread })
-        val thread = db { money().messages().first() }.filter { it.threadId == Seed.OWNER }
+        assertTrue(db { money().notifications().first() }.any { it.handle == Seed.ME && it.ref == ref && it.title == "Kavitha's ${Demo.torq.shortTitle} is booked" && it.unread })
+        assertTrue(db { money().notifications().first() }.any { it.handle == Seed.OWNER && it.ref == ref && it.unread })
+        val thread = db { money().messages().first() }.filter { it.threadId == com.gearloop.app.data.repo.MoneyRepository.dmKey(Seed.ME, Seed.OWNER) }
         assertTrue(thread.any { it.kind == ChatMessage.Kind.SYSTEM && it.body == "Booking confirmed · $ref" })
         // FR-15: the address is released only once payment completes.
         assertTrue(thread.any { it.kind == ChatMessage.Kind.LOCATION && it.body == "Pickup point · 27 Temple Rd, Nallur" })
@@ -222,12 +223,13 @@ class M2MoneyCommitmentTest : FunctionalTest() {
     /** TC-28 · S-33 · Read the thread; Create messages by typing and by attaching the booking reference. */
     @Test
     fun tc28_messages_are_sent() {
+        c.money.openThread(Seed.OWNER)
         launch("s33")
         waitForText("Perfect, thanks. I'll book it for the weekend.")
         val body = "Can I pick it up at 8 instead?"
         compose.onNode(hasSetTextAction()).performTextInput(body)
         desc("Send").tap()
-        until { db { money().messages().first() }.any { it.body == body && it.fromMe && it.threadId == Seed.OWNER } }
+        until { db { money().messages().first() }.any { it.body == body && it.fromHandle == Seed.ME && it.threadId == com.gearloop.app.data.repo.MoneyRepository.dmKey(Seed.ME, Seed.OWNER) } }
         waitForText(body)
         desc("Attach the booking reference").tap()
         until { db { money().messages().first() }.any { it.body.startsWith("Re: GL-") } }
@@ -237,6 +239,7 @@ class M2MoneyCommitmentTest : FunctionalTest() {
     /** TC-29 · S-33 · Delete one of your own messages with a long press; Undo restores it. Theirs can't be deleted. */
     @Test
     fun tc29_own_message_is_deleted_and_restored() {
+        c.money.openThread(Seed.OWNER)
         launch("s33")
         val mine = "Perfect, thanks. I'll book it for the weekend."
         waitForText(mine)
@@ -256,14 +259,15 @@ class M2MoneyCommitmentTest : FunctionalTest() {
         launch("s35")
         waitForText("LKR 6,480")
         tapText("Withdraw")
-        until { db { discovery().profileNow() }?.walletAvailable == 0 }
-        assertTrue(db { money().walletTxns().first() }.any { it.label == "Withdrawal to BOC ••••8812" && it.amount == -6_480 })
+        tapText("Send to my bank")
+        until { db { discovery().profileNow(Seed.ME) }?.walletAvailable == 0 }
+        assertTrue(db { money().walletTxns().first() }.any { it.label == "Withdrawal to your bank" && it.amount == -6_480 })
         text("Withdraw").assertIsNotEnabled()
         tapText("Top up")
         waitForText("Top up your wallet")
         tapText("10,000")
         tapText("Top up LKR 10,000")
-        until { db { discovery().profileNow() }?.walletAvailable == 10_000 }
+        until { db { discovery().profileNow(Seed.ME) }?.walletAvailable == 10_000 }
         assertTrue(db { money().walletTxns().first() }.any { it.label == "Top up from Visa ••••4471" && it.amount == 10_000 })
         waitForText("LKR 10,000")
         shot("s35_wallet")
@@ -272,13 +276,13 @@ class M2MoneyCommitmentTest : FunctionalTest() {
     /** TC-31 · S-38 · Update: mark all read; Delete a notification and undo it. */
     @Test
     fun tc31_notifications_marked_read_and_dismissed() {
-        book() // adds a second unread notification
+        val ref = book() // adds a second unread notification
         launch("s38")
-        waitForText("Kavitha confirmed your booking")
-        assertEquals(2, db { money().notifications().first() }.count { it.unread })
+        waitForText(db { money().notifications().first() }.first { it.handle == Seed.ME && it.ref == ref }.title)
+        assertEquals(2, db { money().notifications().first() }.count { it.handle == Seed.ME && it.unread })
         shot("s38_notifications")
         tapText("Mark all read")
-        until { db { money().notifications().first() }.none { it.unread } }
+        until { db { money().notifications().first() }.none { it.handle == Seed.ME && it.unread } }
         c.toaster.undoDisplayMs = 5_000
         desc("Dismiss Dinesh countered your swap").tap()
         until { db { money().notifications().first() }.none { it.title == "Dinesh countered your swap" } }
@@ -328,8 +332,7 @@ class M2MoneyCommitmentTest : FunctionalTest() {
     @Test
     fun tc34_ruling_needs_a_reason_and_reaches_the_renter() {
         play(DemoData.Scenario.CLAIM_OPEN)
-        launch("s40")
-        waitForText("Claim CL-3081")
+        openClaimOnDesk()
         text("Issue ruling").assertIsNotEnabled()
         val reason = "The tail ding appears on the return frame only. Functional damage, capped by the rubric."
         compose.onNode(hasSetTextAction()).performTextInput(reason)
@@ -341,6 +344,8 @@ class M2MoneyCommitmentTest : FunctionalTest() {
         assertEquals(reason, claim.rationale)
         assertTrue(claim.award!! <= claim.amount)
         assertTrue(db { money().notifications().first() }.any { it.title == "Ruling on claim CL-3081" })
+        signInAs(Seed.ME)
+        c.money.selectClaim("CL-3081")
         relaunch("s34")
         waitForText(reason)
     }
@@ -349,15 +354,25 @@ class M2MoneyCommitmentTest : FunctionalTest() {
     @Test
     fun tc35_more_evidence_then_escalation() {
         play(DemoData.Scenario.CLAIM_OPEN)
-        launch("s40")
-        waitForText("Claim CL-3081")
+        openClaimOnDesk()
         tapText("Request more evidence")
         until { db { money().claim("CL-3081") }?.status == ClaimStatus.MORE_EVIDENCE }
         assertTrue(db { money().notifications().first() }.any { it.title == "More evidence needed · CL-3081" })
         tapText("Escalate")
         until { db { money().claim("CL-3081") }?.status == ClaimStatus.ESCALATED }
+        signInAs(Seed.ME)
+        c.money.selectClaim("CL-3081")
         relaunch("s34")
         waitForText("With a senior adjudicator")
+    }
+
+    /** S-40 opens on the queue on a phone; open CL-3081 from it. */
+    private fun openClaimOnDesk() {
+        signInAs(Seed.ADMIN) // the claims desk is staff-only
+        launch("s40")
+        waitForText("CL-3081")
+        tapText("CL-3081")
+        waitForText("CL-3081 ·", substring = true)
     }
 
     private fun <T> runBlocking(block: suspend () -> T): T = kotlinx.coroutines.runBlocking { block() }

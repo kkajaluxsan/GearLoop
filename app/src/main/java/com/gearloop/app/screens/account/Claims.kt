@@ -20,6 +20,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -27,7 +29,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gearloop.app.data.ClaimStatus
-import com.gearloop.app.data.DemoClock
+import com.gearloop.app.data.AppClock
 import com.gearloop.app.data.countdown
 import com.gearloop.app.data.dayMonth
 import com.gearloop.app.data.grouped
@@ -67,6 +69,13 @@ fun S34DamageClaim(nav: Nav) {
     var accepting by rememberSaveable { mutableStateOf(false) }
     var statement by rememberSaveable { mutableStateOf("") }
     var note by rememberSaveable { mutableStateOf("") }
+    var photos by rememberSaveable { mutableStateOf(listOf<String>()) }
+    val scope = rememberCoroutineScope()
+    val picker = rememberPhotoPicker(
+        title = "Evidence photo",
+        onTaken = { file -> scope.launch { com.gearloop.app.data.PhotoStore.adoptCapture(file)?.let { photos = photos + it } } },
+        onChosen = { uri -> scope.launch { vm.importPhoto(uri)?.let { photos = photos + it } } },
+    )
 
     val claim = claimState
     if (claim == null) {
@@ -74,7 +83,7 @@ fun S34DamageClaim(nav: Nav) {
             EmptyState(
                 icon = Lucide.ShieldCheck,
                 headline = "No claims against you",
-                body = "If an owner reports new damage after a return, the claim and both sets of photos appear here.",
+                body = "If an owner reports new damage after a return, it appears here.",
             )
         }
         return
@@ -83,7 +92,9 @@ fun S34DamageClaim(nav: Nav) {
     val booking = vm.bookingFor(claim)
     val plan = booking?.protection
     val cap = plan?.mostYouCouldLose(booking.item.deposit)
-    val open = claim.status in setOf(ClaimStatus.OPEN, ClaimStatus.MORE_EVIDENCE, ClaimStatus.CONTESTED)
+    // Only the renter answers a claim; the owner who raised it sees where it stands.
+    val respondent = claim.respondent.handle == vm.me
+    val open = respondent && claim.status in setOf(ClaimStatus.OPEN, ClaimStatus.MORE_EVIDENCE, ClaimStatus.CONTESTED)
     val claimant = claim.claimant.name.substringBefore(' ')
     val (pickupPhoto, returnPhoto) = vm.evidenceFor(claim)
 
@@ -103,7 +114,7 @@ fun S34DamageClaim(nav: Nav) {
                             type = ButtonType.SECONDARY, size = ButtonSize.M,
                         )
                         GearButton(
-                            "Add my evidence", { note = claim.renterEvidence.orEmpty(); evidence = true }, Modifier.weight(1f),
+                            "Add my evidence", { note = claim.renterEvidence.orEmpty(); photos = emptyList(); evidence = true }, Modifier.weight(1f),
                             size = ButtonSize.M, icon = Lucide.Camera,
                         )
                     }
@@ -123,7 +134,7 @@ fun S34DamageClaim(nav: Nav) {
                 VGap(4.dp)
                 if (open) {
                     Text(
-                        countdown(ChronoUnit.MILLIS.between(DemoClock.now(), claim.respondBy)),
+                        countdown(ChronoUnit.MILLIS.between(AppClock.now(), claim.respondBy)),
                         style = GearType.dataL,
                         color = GearColor.Warning700,
                     )
@@ -143,16 +154,19 @@ fun S34DamageClaim(nav: Nav) {
             )
             ClaimStatus.ESCALATED -> Banner(
                 title = "With a senior adjudicator",
-                text = "The claims desk has escalated this. Nothing changes for you until a ruling is issued.",
+                text = "Nothing changes for you until a ruling is issued.",
                 kind = BannerKind.INFO,
             )
-            else -> Banner(
+            else -> if (!respondent) Banner(
+                title = "You reported new damage on the ${claim.area.lowercase()}",
+                text = "${claim.respondent.name.substringBefore(' ')} has until ${dayMonth(claim.respondBy.toLocalDate())} to respond.",
+                kind = BannerKind.INFO,
+            ) else Banner(
                 title = "$claimant reported new damage on the ${claim.area.lowercase()}",
                 text = if (claim.status == ClaimStatus.MORE_EVIDENCE) {
-                    "The claims desk has asked for anything else you have. Add it before ${dayMonth(claim.respondBy.toLocalDate())}."
+                    "The claims desk wants more evidence. Add it before ${dayMonth(claim.respondBy.toLocalDate())}."
                 } else {
-                    "You have until ${dayMonth(claim.respondBy.toLocalDate())} to accept, add evidence, or contest. " +
-                        "If you do nothing, the claim is decided on the evidence already filed."
+                    "Respond by ${dayMonth(claim.respondBy.toLocalDate())}, or it is decided on the evidence already filed."
                 },
                 kind = BannerKind.WARNING,
             )
@@ -200,9 +214,7 @@ fun S34DamageClaim(nav: Nav) {
                 // the item's value rather than typed, so the badge above can
                 // never disagree with the percentage in the sentence.
                 Text(
-                    "${claim.severity.label} damage is capped at ${claim.severity.capPercent}% of the " +
-                        "item's value under the rubric. It is valued at ${lkr(claim.itemValue)}, " +
-                        "so the maximum claim is ${lkr(claim.cap)}.",
+                    "Capped at ${claim.severity.capPercent}% of its ${lkr(claim.itemValue)} value: at most ${lkr(claim.cap)}.",
                     style = GearType.bodyS,
                     color = GearText.secondary,
                 )
@@ -214,7 +226,8 @@ fun S34DamageClaim(nav: Nav) {
                         GearIcon(Lucide.ShieldCheck, null, size = IconSize.m, tint = GearColor.Success500)
                         Spacer(Modifier.width(Space.s))
                         Text(
-                            "With ${plan.label} protection the most you could pay is ${lkr(cap)}.",
+                            if (respondent) "With ${plan.label} protection the most you could pay is ${lkr(cap)}."
+                            else "${claim.respondent.name.substringBefore(' ')} pays at most ${lkr(cap)} with ${plan.label} protection. GearLoop covers the rest.",
                             style = GearType.bodyS,
                             color = GearText.body,
                             modifier = Modifier.weight(1f),
@@ -224,12 +237,18 @@ fun S34DamageClaim(nav: Nav) {
             }
         }
 
-        if (claim.renterStatement != null || claim.renterEvidence != null) {
+        if (claim.renterStatement != null || claim.renterEvidence != null || claim.renterPhotos.isNotEmpty()) {
             VGap(Space.l)
             Eyebrow("Your side")
             VGap(Space.s)
             claim.renterStatement?.let { IconRow(Lucide.Quote, it, Modifier.padding(vertical = 4.dp), tint = GearColor.Marine500, style = GearType.bodyS) }
             claim.renterEvidence?.let { IconRow(Lucide.Paperclip, it, Modifier.padding(vertical = 4.dp), tint = GearColor.Marine500, style = GearType.bodyS) }
+            if (claim.renterPhotos.isNotEmpty()) {
+                VGap(Space.s)
+                Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                    claim.renterPhotos.take(4).forEach { GearImage(it, "Evidence photo", Modifier.size(72.dp), GearShape.sm) }
+                }
+            }
         }
 
         if (open) {
@@ -237,8 +256,7 @@ fun S34DamageClaim(nav: Nav) {
             Eyebrow("If you agree it was you")
             VGap(Space.s)
             Text(
-                "Accepting settles the claim at ${lkr(claim.amount)} and closes it. " +
-                    "You pay ${lkr(vm.renterShare(claim, claim.amount))}. It can't be reopened afterwards.",
+                "Settles at ${lkr(claim.amount)}. You pay ${lkr(vm.renterShare(claim, claim.amount))}.",
                 style = GearType.bodyS,
                 color = GearText.secondary,
             )
@@ -258,8 +276,6 @@ fun S34DamageClaim(nav: Nav) {
             confirmLabel = "Contest",
             onConfirm = { vm.contest(claim.ref, statement); contesting = false },
         ) {
-            Text("The adjudicator reads this beside both photos.", style = GearType.bodyS, color = GearText.secondary)
-            VGap(Space.s)
             GearTextField(
                 statement, label = "Your statement",
                 placeholder = "e.g. The mark was there at pickup",
@@ -272,16 +288,21 @@ fun S34DamageClaim(nav: Nav) {
             title = "Add evidence",
             onDismiss = { evidence = false },
             confirmLabel = "Add to claim",
-            onConfirm = { vm.addEvidence(claim.ref, note); evidence = false },
-            confirmEnabled = note.isNotBlank(),
+            onConfirm = { vm.addEvidence(claim.ref, note, photos); evidence = false },
+            confirmEnabled = note.isNotBlank() || photos.isNotEmpty(),
         ) {
             Text(
-                "Your pickup record is already on the claim. Add anything else: what happened, a receipt, a witness.",
+                "Your pickup record is already attached. Add a note, a receipt or a photo.",
                 style = GearType.bodyS,
                 color = GearText.secondary,
             )
             VGap(Space.s)
             GearTextField(note, label = "Evidence", onValueChange = { note = it }, singleLine = false)
+            VGap(Space.s)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                photos.takeLast(3).forEach { GearImage(it, "Evidence photo", Modifier.size(52.dp), GearShape.sm) }
+                GearButton(if (photos.isEmpty()) "Add a photo" else "Add another", { picker.open() }, type = ButtonType.SECONDARY, size = ButtonSize.S, icon = Lucide.Camera)
+            }
         }
     }
     if (accepting) {
@@ -355,7 +376,14 @@ fun S35Wallet(nav: Nav) {
     val covered by vm.coveredNotHeld.collectAsStateWithLifecycle()
     val txns by vm.transactions.collectAsStateWithLifecycle()
     var toppingUp by rememberSaveable { mutableStateOf(false) }
+    var addingCard by rememberSaveable { mutableStateOf(false) }
+    // Top up with no card asks for the card first, then carries straight on to
+    // the top-up instead of making the member tap Top up a second time.
+    var topUpAfterCard by rememberSaveable { mutableStateOf(false) }
+    var withdrawing by rememberSaveable { mutableStateOf(false) }
     var amount by rememberSaveable { mutableIntStateOf(5_000) }
+    val profile by vm.profile.collectAsStateWithLifecycle()
+    val card = profile?.card
 
     GearScreen(
         appBar = { AppBar(title = "Wallet", onBack = { nav.back() }) },
@@ -373,8 +401,22 @@ fun S35Wallet(nav: Nav) {
             Text(lkr(available), style = GearType.dataXl, color = GearText.onDark)
             VGap(Space.sm)
             Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                GearButton("Withdraw", { vm.withdraw() }, type = ButtonType.PRIMARY, size = ButtonSize.S, enabled = available > 0)
-                GearButton("Top up", { toppingUp = true }, type = ButtonType.GHOST, size = ButtonSize.S, contentColor = GearText.onDark)
+                GearButton("Withdraw", { withdrawing = true }, type = ButtonType.PRIMARY, size = ButtonSize.S, enabled = available > 0)
+                GearButton("Top up", { if (card == null) { topUpAfterCard = true; addingCard = true } else toppingUp = true }, type = ButtonType.GHOST, size = ButtonSize.S, contentColor = GearText.onDark)
+            }
+        }
+
+        VGap(Space.m)
+        GearCard(Modifier.fillMaxWidth()) {
+            Row(Modifier.padding(Space.cardPadding), verticalAlignment = Alignment.CenterVertically) {
+                GearIcon(Lucide.CreditCard, null, size = IconSize.m, tint = GearText.primary)
+                Spacer(Modifier.width(Space.sm))
+                Column(Modifier.weight(1f)) {
+                    Text(card?.label ?: "No card saved", style = GearType.labelL, color = GearText.primary)
+                    Text(if (card != null) "Expires ${card.expiry}" else "Add one to pay and to top up", style = GearType.bodyS, color = GearText.tertiary)
+                }
+                if (card != null) GearLink("Remove", { vm.removeCard() }, color = GearText.tertiary)
+                else GearLink("Add a card", { addingCard = true })
             }
         }
 
@@ -384,7 +426,7 @@ fun S35Wallet(nav: Nav) {
         })
         VGap(6.dp)
         Text(
-            "A hold is not a charge. The money stays on your card and is released after return.",
+            "Held, not charged. Each hold is released after return.",
             style = GearType.bodyS,
             color = GearText.secondary,
         )
@@ -437,6 +479,9 @@ fun S35Wallet(nav: Nav) {
         VGap(Space.m)
         Eyebrow("Transactions")
         VGap(Space.s)
+        if (txns.isEmpty()) {
+            Text("No transactions yet.", style = GearType.bodyS, color = GearText.tertiary)
+        }
         txns.forEach { txn ->
             Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 // Chalk/200, not chalk/100: the page behind this row *is*
@@ -473,6 +518,27 @@ fun S35Wallet(nav: Nav) {
         VGap(Space.section)
     }
 
+    if (addingCard) {
+        AddCardDialog(vm, onSaved = { if (topUpAfterCard) toppingUp = true }) {
+            addingCard = false
+            topUpAfterCard = false
+        }
+    }
+    if (withdrawing) {
+        GearDialog(
+            title = "Withdraw ${lkr(available)}?",
+            onDismiss = { withdrawing = false },
+            confirmLabel = "Send to my bank",
+            onConfirm = { withdrawing = false; vm.withdraw() },
+        ) {
+            Text(
+                "Holds stay until each rental is returned.",
+                style = GearType.bodyM,
+                color = GearText.secondary,
+            )
+        }
+    }
+
     if (toppingUp) {
         GearDialog(
             title = "Top up your wallet",
@@ -480,7 +546,7 @@ fun S35Wallet(nav: Nav) {
             confirmLabel = "Top up ${lkr(amount)}",
             onConfirm = { vm.topUp(amount); toppingUp = false },
         ) {
-            Text("From Visa •••• 4471.", style = GearType.bodyS, color = GearText.secondary)
+            Text("From ${card?.label ?: "your card"}.", style = GearType.bodyS, color = GearText.secondary)
             VGap(Space.s)
             Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
                 listOf(2_000, 5_000, 10_000).forEach { option ->

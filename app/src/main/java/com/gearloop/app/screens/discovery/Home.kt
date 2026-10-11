@@ -9,6 +9,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,8 +42,6 @@ import com.gearloop.app.data.lkr
 import com.gearloop.app.nav.Nav
 import com.gearloop.app.ui.vm.FitDiscoveryViewModel
 import com.gearloop.app.ui.vm.gearViewModel
-import com.gearloop.app.ui.theme.Metrics
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gearloop.app.screens.MainTab
@@ -71,6 +70,7 @@ fun S04Home(nav: Nav) {
     val profile by vm.profile.collectAsStateWithLifecycle()
     val unread by vm.unread.collectAsStateWithLifecycle()
     val matches by vm.matches.collectAsStateWithLifecycle()
+    val railSport by vm.railSport.collectAsStateWithLifecycle()
     val filters = LocalSearchFilters.current
     // The home chips write to the same model the sheet and the results use, so
     // "Instant book" means one thing in the app rather than three.
@@ -81,7 +81,7 @@ fun S04Home(nav: Nav) {
         activeFilter = label
         filters.instantOnly = label == "Instant book"
         filters.fitOnly = label == "Fits me"
-        filters.priceUpper = if (label == "Under LKR 2,000") 0.34f else 1f
+        filters.priceUpper = if (label == "Under LKR 2,000") SearchFilters.fractionOf(2_000) else 1f
     }
 
     // A chip is lit only while its filter is really on. The three above live in
@@ -103,7 +103,7 @@ fun S04Home(nav: Nav) {
     }
 
     GearScreen(
-        appBar = { HomeAppBar(nav, profile?.person?.area?.substringAfterLast(", ") ?: "Jaffna", unread) },
+        appBar = { HomeAppBar(nav, profile?.person?.area?.substringAfterLast(", ")?.ifBlank { null } ?: "Jaffna", unread) },
         tabBar = { MainTabBar(nav, MainTab.EXPLORE) },
         contentPadding = 0.dp,
     ) {
@@ -133,8 +133,26 @@ fun S04Home(nav: Nav) {
         }
 
         VGap(Space.l)
+        // Every sport, one tap from results for it.
+        Box(Modifier.padding(horizontal = Space.screen)) { Eyebrow("Browse by sport") }
+        VGap(Space.s)
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = Space.screen),
+            horizontalArrangement = Arrangement.spacedBy(Space.s),
+        ) {
+            items(Demo.sports, key = { it.first }) { (sport, photo) ->
+                SportChipTile(sport, photo) {
+                    filters.reset()
+                    filters.sports.add(sport)
+                    nav.to("s05")
+                }
+            }
+        }
+
+        VGap(Space.l)
         Rail(
-            eyebrow = "This weekend near you",
+            eyebrow = "Free near you",
             items = homeOnly(filters.apply(rails["weekend"].orEmpty())),
             onOpen = open,
             onSave = vm::toggleSaved,
@@ -167,12 +185,12 @@ fun S04Home(nav: Nav) {
         // count is the live one, so hiding a match on S-19 changes it here.
         val people = matches.map { it.offer.counterparty.handle }.distinct().size
         if (people > 0) {
+            val gives = matches.map { it.offer.give.shortTitle }.distinct()
+            val yours = if (gives.size == 1) "your ${gives.first()}" else "your gear"
             Box(Modifier.padding(horizontal = Space.screen)) {
                 Banner(
-                    title = if (people == 1) "1 person wants to swap for your Burton Custom"
-                    else "$people people want to swap for your Burton Custom",
-                    text = if (matches.any { it.offer.threeWay }) "One of the trades is a three-way loop."
-                    else "Each one is a straight two-way trade.",
+                    text = if (people == 1) "1 person would swap for $yours"
+                    else "$people people would swap for $yours",
                     kind = BannerKind.INFO,
                     action = "View matches",
                     onAction = { nav.to("s19") },
@@ -182,8 +200,8 @@ fun S04Home(nav: Nav) {
 
         VGap(Space.l)
         Rail(
-            eyebrow = "New in surfing",
-            items = homeOnly(filters.apply(rails["surf"].orEmpty())),
+            eyebrow = "New in ${railSport.lowercase()}",
+            items = homeOnly(filters.apply(rails["new"].orEmpty())),
             onOpen = open,
             onSave = vm::toggleSaved,
             onSeeAll = { nav.to("s05") },
@@ -212,17 +230,20 @@ private fun HomeAppBar(nav: Nav, area: String, unread: Int) {
                 .clip(GearShape.full)
                 .border(Border.hair, GearSurface.border, GearShape.full)
                 .background(GearSurface.card)
-                .clickable(role = Role.Button) { nav.to("s29") }
+                .clickable(role = Role.Button, onClickLabel = "Show gear near $area on a map") { nav.to("s29") }
                 .padding(start = 12.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             GearIcon(Lucide.MapPin, null, size = IconSize.s, tint = GearColor.Pine800)
             Spacer(Modifier.width(6.dp))
             Text(area, style = GearType.labelM, color = GearText.primary)
-            Spacer(Modifier.width(2.dp))
-            GearIcon(Lucide.ChevronDown, null, size = IconSize.s, tint = GearColor.Chalk500)
+            Spacer(Modifier.width(6.dp))
+            // A map, not a drop-down: the pill opens the map of what's near, and
+            // a down-chevron promised a list of places to switch to.
+            GearIcon(Lucide.Map, null, size = IconSize.s, tint = GearColor.Chalk500)
         }
         Spacer(Modifier.weight(1f))
+        GearIconButton(Lucide.Heart, "Saved gear", { nav.to(com.gearloop.app.nav.Routes.SAVED) })
         GearIconButton(
             icon = Lucide.Bell,
             contentDescription = if (unread > 0) "Notifications, $unread unread" else "Notifications",
@@ -342,7 +363,7 @@ fun S05SearchResults(nav: Nav) {
                 // The list is every listing in Jaffna, filtered — a bike, a
                 // tent and a cricket bat among them. Heading it "Surfboards"
                 // described a result set the screen has never shown.
-                title = "Gear in ${profile?.person?.area ?: Demo.nirmal.area}",
+                title = "Gear near ${profile?.person?.area?.ifBlank { null } ?: "Jaffna"}",
                 onBack = { nav.back() },
                 actions = {
                     GearIconButton(Lucide.Map, "Map view", { nav.to("s29") }, size = 40.dp)
@@ -367,26 +388,22 @@ fun S05SearchResults(nav: Nav) {
                     filterCount = filters.activeCount,
                 )
                 VGap(Space.sm)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        if (results.size == 1) "1 result" else "${results.size} results",
-                        style = GearType.dataM,
-                        color = GearText.primary,
-                    )
-                    Spacer(Modifier.weight(1f))
-                    // Was a `clickable {}` that did nothing and had no role. Each
-                    // tap now moves to the next ordering.
-                    Row(
-                        Modifier
-                            .heightIn(min = Metrics.tapTarget)
-                            .clickable(role = Role.Button, onClickLabel = "Change the order") {
-                                sort = (sort + 1) % sortModes.size
-                            }
-                            .padding(horizontal = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(sortModes[sort], style = GearType.labelM, color = GearText.primary)
-                        GearIcon(Lucide.ArrowUpDown, null, size = IconSize.s, tint = GearColor.Chalk500)
+                Text(
+                    if (results.size == 1) "1 result" else "${results.size} results",
+                    style = GearType.dataM,
+                    color = GearText.primary,
+                )
+                // All three orders on show, one tap each. A single control that
+                // cycled through them hid two of the three until it was tapped.
+                VGap(Space.s)
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberSavedScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(Space.s),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    GearIcon(Lucide.ArrowUpDown, null, size = IconSize.s, tint = GearColor.Chalk500)
+                    sortModes.forEachIndexed { i, mode ->
+                        Chip(mode, selected = sort == i, onClick = { sort = i })
                     }
                 }
                 // The chips are the filters, not a picture of them: removing one
@@ -427,8 +444,7 @@ fun S05SearchResults(nav: Nav) {
                     EmptyState(
                         icon = Lucide.Search,
                         headline = "Nothing matches all of that",
-                        body = "Loosen one filter and there is gear here. " +
-                            "${all.size} items are listed in total.",
+                        body = "Loosen one filter and there is gear here.",
                         actionLabel = "Loosen the tightest filter",
                         onAction = filters::loosen,
                         secondaryLabel = "Clear all filters",
@@ -466,6 +482,9 @@ private fun ActiveFilterChips(filters: SearchFilters) {
     if (filters.query.isNotBlank()) {
         RemovableChip("\"${filters.query}\"") { filters.query = "" }
     }
+    filters.sports.toList().forEach { sport ->
+        RemovableChip(sport) { filters.sports.remove(sport) }
+    }
     if (filters.fitOnly) {
         RemovableChip("Fits me") { filters.fitOnly = false }
     }
@@ -499,4 +518,24 @@ private fun ActiveFilterChips(filters: SearchFilters) {
 @Composable
 private fun RemovableChip(label: String, onRemove: () -> Unit) {
     Chip(label = label, selected = true, onClick = onRemove, trailingIcon = Lucide.X)
+}
+
+/** A sport's photograph as a small tile, for the home screen's sport row. */
+@Composable
+private fun SportChipTile(sport: String, photo: Int, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .width(112.dp)
+            .height(72.dp)
+            .clip(GearShape.md)
+            .clickable(role = Role.Button, onClickLabel = "Show $sport gear", onClick = onClick),
+    ) {
+        GearImage(photo, null, Modifier.fillMaxSize(), scrim = 0.5f)
+        Text(
+            sport,
+            style = GearType.labelL,
+            color = GearText.onDark,
+            modifier = Modifier.align(Alignment.BottomStart).padding(8.dp),
+        )
+    }
 }

@@ -121,4 +121,14 @@ class PricingTest {
         assertTrue("Service fee" in explained)
         assertTrue("Coupon" in explained)
     }
+
+    @Test
+    fun `gear nobody has valued is never worth nothing`() {
+        // A no-deposit listing used to be valued at twice nothing, which capped
+        // any claim on it at LKR 0 and made it free in a swap.
+        val free = Demo.torq.copy(deposit = 0, pricePerDay = 600)
+        assertEquals(18_000, Pricing.estimatedValue(free))
+        assertEquals(Demo.torq.deposit * 2, Pricing.estimatedValue(Demo.torq))
+        assertTrue(Marketplace.listings.all { Pricing.estimatedValue(it) > 0 })
+    }
 }

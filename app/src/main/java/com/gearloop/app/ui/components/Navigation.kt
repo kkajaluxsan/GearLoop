@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -313,11 +314,13 @@ fun GearScreen(
     darkStatusBar: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    SystemBarIcons(darkSurface = darkStatusBar)
+    // Only the top runs dark on these screens; the bottom is still the light page.
+    SystemBarIcons(darkSurface = darkStatusBar, darkNavigationBar = false)
     // Hoisted rather than called inside the `then` branch: a remember that only
     // runs on one side of a condition is a slot-table hazard.
     val scroll = rememberSavedScrollState()
-    Column(modifier.fillMaxSize().background(background)) {
+    // Lifts the footer above the keyboard, so a form's main action stays in reach while typing.
+    Column(modifier.fillMaxSize().background(background).imePadding()) {
         appBar?.invoke()
         Column(
             Modifier
@@ -355,7 +358,8 @@ fun GearLazyScreen(
     content: LazyListScope.() -> Unit,
 ) {
     SystemBarIcons(darkSurface = false)
-    Column(modifier.fillMaxSize().background(background)) {
+    // Lifts the footer above the keyboard, so a form's main action stays in reach while typing.
+    Column(modifier.fillMaxSize().background(background).imePadding()) {
         appBar?.invoke()
         LazyColumn(
             modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -443,14 +447,18 @@ fun ProgressRing(
  *
  * The app is a light design with three deliberately dark screens, so the icon
  * appearance has to follow the surface underneath rather than being set once at
- * launch. Every screen shell declares which it is.
+ * launch. Every screen shell declares which it is. A screen that is dark only at
+ * the top — a pine hero over a light page — passes [darkNavigationBar] false, so
+ * the gesture bar over the light bottom keeps its dark handle.
  */
 @Composable
-fun SystemBarIcons(darkSurface: Boolean) {
+fun SystemBarIcons(darkSurface: Boolean, darkNavigationBar: Boolean = darkSurface) {
     val view = LocalView.current
     // In the dark theme every surface is dark, so a screen that only declares
     // itself light would still get light icons and lose them against the bar.
-    val onDark = darkSurface || LocalPalette.current.isDark
+    val dark = LocalPalette.current.isDark
+    val onDark = darkSurface || dark
+    val navOnDark = darkNavigationBar || dark
     if (view.isInEditMode) return
     SideEffect {
         // The view's context is not guaranteed to be the Activity — it can be a
@@ -460,7 +468,7 @@ fun SystemBarIcons(darkSurface: Boolean) {
             .firstOrNull() ?: return@SideEffect
         WindowCompat.getInsetsController(activity.window, view).apply {
             isAppearanceLightStatusBars = !onDark
-            isAppearanceLightNavigationBars = !onDark
+            isAppearanceLightNavigationBars = !navOnDark
         }
     }
 }

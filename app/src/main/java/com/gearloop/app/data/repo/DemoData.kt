@@ -1,25 +1,25 @@
 package com.gearloop.app.data.repo
 
 import androidx.room.withTransaction
+import com.gearloop.app.data.CaptureGuide
 import com.gearloop.app.data.DamageMark
 import com.gearloop.app.data.Demo
-import com.gearloop.app.data.DemoClock
 import com.gearloop.app.data.Phase
 import com.gearloop.app.data.db.GearDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * Seeding, resetting, and the two prepared scenarios.
+ * Writing the sample marketplace, and putting it back.
  *
- * "Reset the demo" on the cover now means what it says: the database is cleared
- * and seeded again, and the clock goes back to 09:14 on the 5th. That is what a
- * usability session starts from, so every participant meets the same app.
+ * A new install writes [Seed.World] once — members, listings, bookings,
+ * conversations — and opens signed out, on the welcome pages. Later launches
+ * read what is there. [reset] clears every table and writes the marketplace
+ * again; the functional tests start from it, and so does a usability session.
  *
  * The scenarios fast-forward to the middle of a rental or to an open claim.
  * They are not fixtures written into tables — each one runs the same repository
- * calls the screens make, in order, so reaching S-34 this way exercises exactly
- * the code a participant would.
+ * calls the screens make, in order.
  */
 class DemoData(
     private val db: GearDatabase,
@@ -29,61 +29,48 @@ class DemoData(
     private val evidence: EvidenceRepository,
 ) {
 
-    enum class Scenario(val title: String, val blurb: String) {
-        MID_RENTAL(
-            "Mid-rental",
-            "GL-7K3M9 booked, the board checked together and signed for — S-17 is live.",
-        ),
-        CLAIM_OPEN(
-            "After return, claim open",
-            "The board is back with a new tail ding, and Kavitha has raised claim CL-3081.",
-        ),
-    }
+    enum class Scenario { MID_RENTAL, CLAIM_OPEN }
 
-    /** First launch seeds; every later launch picks the clock up where it was. */
+    /** First launch writes the sample marketplace; every later launch reads it. */
     suspend fun start() {
-        if (db.discovery().profileNow() == null) {
-            seed()
-        } else {
-            session.load()
-            DemoClock.anchorRealMillis = session.session.value.clockAnchor
-        }
+        if (db.accounts().count() == 0) seed() else session.load()
         store.awaitLoaded()
     }
 
     suspend fun seed() {
-        val anchor = DemoClock.restart()
+        val w = Seed.World()
         val s = db.seed()
         db.withTransaction {
-            s.people(Seed.people())
-            s.profile(Seed.profile())
-            s.sports(Seed.sports())
-            s.listings(Seed.listings())
-            s.rails(Seed.rails())
-            s.reviews(Seed.reviews())
-            s.trip(Seed.trip())
-            s.tripItems(Seed.tripItems())
-            s.bookings(Seed.bookings())
-            s.txns(Seed.walletTxns())
-            s.notifications(Seed.notifications())
-            s.messages(Seed.messages())
-            s.claims(Seed.claims())
-            s.verification(Seed.verificationSteps())
-            s.badges(Seed.badges())
-            s.matches(Seed.matches())
-            s.proposals(Seed.proposals())
-            s.cycle(Seed.cycle())
-            s.blocks(Seed.blocks())
-            s.tasks(Seed.tasks())
-            s.closet(Seed.closet())
+            s.accounts(w.accounts())
+            s.people(w.people())
+            s.profiles(w.profiles())
+            s.sports(w.sports())
+            s.listings(w.listings())
+            s.reviews(w.reviews())
+            s.trips(w.trips())
+            s.tripItems(w.tripItems())
+            s.bookings(w.bookings())
+            s.txns(w.walletTxns())
+            s.notifications(w.notifications())
+            s.messages(w.messages())
+            s.claims(w.claims())
+            s.verification(w.verificationSteps())
+            s.badges(w.badges())
+            s.matches(w.matches())
+            s.proposals(w.proposals())
+            s.cycle(w.cycle())
+            s.blocks(w.blocks())
+            s.tasks(w.tasks())
+            s.closet(w.closet())
         }
-        session.replace(Seed.session(anchor))
+        session.replace(SessionStore.fresh())
     }
 
-    /** Everything back to how it was designed. */
-    suspend fun reset() {
+    /** Everything back to the sample marketplace, optionally signed in as [signInAs]. */
+    suspend fun reset(signInAs: String? = Seed.ME) {
         withContext(Dispatchers.IO) { db.clearAllTables() }
         seed()
+        if (signInAs != null) session.signIn(signInAs)
         store.awaitLoaded()
     }
 
@@ -94,31 +81,39 @@ class DemoData(
         if (scenario == Scenario.CLAIM_OPEN) returnWithDamage(ref)
     }
 
-    /** Flow A up to S-12, through the same calls S-07 to S-11 make. */
+    /** Booking the Torq, through the same calls the listing and checkout make. */
     private suspend fun bookTheTorq(): String {
         session.selectListing(Demo.torq.id)
         money.startBooking(Demo.torq.id)
         money.signWaiver(Demo.nirmal.name)
-        return requireNotNull(money.confirmDraft()) { "the Torq should be bookable on the seeded dates" }
+        val result = money.confirmDraft()
+        return requireNotNull((result as? MoneyRepository.ConfirmResult.Booked)?.ref) { "the Torq should be bookable on its default dates, got $result" }
     }
 
-    /** S-13 to S-16: handshake, seven angles, the pickup mark, both signatures. */
+    /** Tag checked, seven frames, the pickup mark, both signatures. */
     private suspend fun handOver(ref: String) {
         evidence.select(ref)
         evidence.enterCode(ref, Seed.handoverCode(ref))
         evidence.startCapture(Phase.PICKUP)
-        evidence.angles.forEach { evidence.capture(ref, Phase.PICKUP, it) }
+        val angles = CaptureGuide.anglesFor(Demo.torq.sport)
+        angles.forEachIndexed { i, angle -> evidence.capture(ref, Phase.PICKUP, angle, FRAMES[i % FRAMES.size]) }
         evidence.addMark(ref, Phase.PICKUP, Demo.PICKUP_MARK.area, Demo.PICKUP_MARK.severity, Demo.PICKUP_MARK.note, 0.5f, 0.86f)
         evidence.signAsRenter(ref)
         evidence.ownerSigns(ref)
     }
 
-    /** S-17 to S-18b: return frames, the new ding, and the claim raised from it. */
+    /** The return frames, the new ding, and the claim raised from it. */
     private suspend fun returnWithDamage(ref: String) {
         evidence.startCapture(Phase.RETURN)
-        evidence.angles.forEach { evidence.capture(ref, Phase.RETURN, it) }
+        val angles = CaptureGuide.anglesFor(Demo.torq.sport)
+        angles.forEachIndexed { i, angle -> evidence.capture(ref, Phase.RETURN, angle, FRAMES[i % FRAMES.size]) }
         val markId = evidence.addMark(ref, Phase.RETURN, Demo.RETURN_MARK.area, DamageMark.Severity.FUNCTIONAL, Demo.RETURN_MARK.note, 0.5f, 0.86f)
         evidence.finishReturn(ref)
         evidence.raiseClaim(markId)
+    }
+
+    private companion object {
+        /** Bundled condition photographs standing in for camera frames when a test fast-forwards. */
+        val FRAMES = listOf("torq_2", "torq_5", "cond_3", "cond_1", "torq_4", "torq_4", "cond_2")
     }
 }

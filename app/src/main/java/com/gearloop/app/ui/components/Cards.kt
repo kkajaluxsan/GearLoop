@@ -103,7 +103,7 @@ private fun ListingCardGrid(item: GearItem, onClick: () -> Unit, modifier: Modif
     ) {
         Box {
             GearImage(
-                res = item.hero,
+                photo = item.hero,
                 contentDescription = item.title,
                 modifier = Modifier.fillMaxWidth().height(139.dp),
                 shape = GearShape.imageTop,
@@ -173,7 +173,7 @@ private fun ListingCardList(item: GearItem, onClick: () -> Unit, modifier: Modif
             Row(Modifier.padding(8.dp), verticalAlignment = Alignment.Top) {
                 Box {
                     GearImage(
-                        res = item.hero,
+                        photo = item.hero,
                         contentDescription = item.title,
                         modifier = Modifier.size(96.dp),
                         shape = GearShape.sm,
@@ -280,7 +280,7 @@ private fun ListingCardWide(item: GearItem, onClick: () -> Unit, modifier: Modif
     GearCard(modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onClick)) {
         Box {
             GearImage(
-                res = item.hero,
+                photo = item.hero,
                 contentDescription = item.title,
                 modifier = Modifier.fillMaxWidth().height(168.dp),
                 shape = GearShape.imageTop,

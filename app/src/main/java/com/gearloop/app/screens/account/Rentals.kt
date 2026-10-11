@@ -21,6 +21,8 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -30,7 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gearloop.app.data.BookingStatus
 import com.gearloop.app.data.Demo
-import com.gearloop.app.data.DemoClock
+import com.gearloop.app.data.AppClock
 import com.gearloop.app.data.Grade
 import com.gearloop.app.data.ListingStatus
 import com.gearloop.app.data.Phase
@@ -39,7 +41,6 @@ import com.gearloop.app.data.dayTime
 import com.gearloop.app.data.lkr
 import com.gearloop.app.data.repo.Booking
 import com.gearloop.app.data.repo.ClosetItem
-import com.gearloop.app.data.repo.Seed
 import com.gearloop.app.nav.Nav
 import com.gearloop.app.screens.MainTab
 import com.gearloop.app.screens.MainTabBar
@@ -94,7 +95,7 @@ fun S31MyRentals(nav: Nav) {
                     EmptyState(
                         icon = Lucide.Package,
                         headline = "Nothing out right now",
-                        body = "A rental moves here once you and the owner have both signed the condition record.",
+                        body = "A rental appears here once you both sign at pickup.",
                         actionLabel = if (upcoming.isNotEmpty()) "See upcoming" else "Find gear",
                         onAction = { if (upcoming.isNotEmpty()) tab = 1 else nav.tab("s04") },
                     )
@@ -124,7 +125,7 @@ fun S31MyRentals(nav: Nav) {
                 }
                 upcoming.forEach { booking ->
                     val requested = booking.status == BookingStatus.REQUESTED
-                    val days = ChronoUnit.DAYS.between(DemoClock.today, booking.start)
+                    val days = ChronoUnit.DAYS.between(AppClock.today, booking.start)
                     BookingCard(
                         booking.item,
                         booking.dates,
@@ -199,7 +200,7 @@ fun S31MyRentals(nav: Nav) {
             onDestructive = { cancelling = null; vm.cancel(ref) },
         ) {
             Text(
-                "The owner won't be asked any more and the payment for $ref is refunded in full.",
+                "The payment for $ref is refunded in full.",
                 style = GearType.bodyM,
                 color = GearText.secondary,
             )
@@ -226,12 +227,12 @@ private fun ActiveCard(booking: Booking, onReturn: () -> Unit, onOpen: () -> Uni
             Column(Modifier.padding(horizontal = Space.cardPadding)) {
                 if (returned) {
                     Text(
-                        "Back with ${booking.owner.name.substringBefore(' ')}, who has 24 h to check it against the pickup record.",
+                        "Back with ${booking.owner.name.substringBefore(' ')}, who has 24 h to check it.",
                         style = GearType.bodyS,
                         color = GearText.secondary,
                     )
                 } else {
-                    val left = ChronoUnit.MILLIS.between(DemoClock.now(), booking.returnAt)
+                    val left = ChronoUnit.MILLIS.between(AppClock.now(), booking.returnAt)
                     Countdown(countdown(left), if (left >= 0) "Until return" else "Overdue")
                     VGap(Space.s)
                     Text(
@@ -254,7 +255,7 @@ private fun ActiveCard(booking: Booking, onReturn: () -> Unit, onOpen: () -> Uni
 
 /* ------------------------------------------------------------------ S-36 */
 
-private val closetSports = listOf("Surfing", "Cycling", "SUP", "Cricket", "Camping", "Kayaking", "Climbing", "Snowboarding")
+private val closetSports = Demo.sports.map { it.first } + "Snowboarding"
 
 /** The word for one of a sport's gear, for "your kayak hasn't moved". */
 private fun noun(item: ClosetItem): String = when (item.sport) {
@@ -305,15 +306,14 @@ fun S36GearCloset(nav: Nav) {
             // What it could earn is read off what similar gear rents for nearby —
             // gear that is actually for rent, not listed for swap only.
             val dayRate = listings
-                .filter { it.sport == idle.sport && it.owner.handle != Seed.ME && it.status == ListingStatus.PUBLISHED }
+                .filter { it.sport == idle.sport && it.owner.handle != vm.me && it.status == ListingStatus.PUBLISHED }
                 .map { it.pricePerDay }.average()
                 .takeIf { !it.isNaN() }?.toInt() ?: Demo.SUGGESTED_PRICE
             InsightCard(
                 headline = "Your ${noun(idle)} hasn't moved in ${idle.idleDays} days",
-                body = "People nearby rent ${idle.sport.lowercase()} gear most weekends. It could earn about " +
-                    "${lkr(dayRate * 2 / 100 * 100)} a weekend.",
+                body = "It could earn about ${lkr(dayRate * 2 / 100 * 100)} a weekend.",
                 action = "List it",
-                onAction = { vm.startListing(Seed.ME, idle.id) { nav.to("s25") } },
+                onAction = { vm.startListing(idle.id) { nav.to("s25") } },
             )
         }
 
@@ -322,7 +322,7 @@ fun S36GearCloset(nav: Nav) {
             EmptyState(
                 icon = Lucide.Boxes,
                 headline = "Your closet is empty",
-                body = "Add what you own and GearLoop can suggest what to rent out or swap.",
+                body = "Add what you own to rent it out or swap it.",
                 actionLabel = "Add gear",
                 onAction = { adding = true },
             )
@@ -384,8 +384,9 @@ fun S36GearCloset(nav: Nav) {
             title = "Add to your closet",
             initial = null,
             onDismiss = { adding = false },
-            onSave = { name, sport, size, grade ->
-                vm.addClosetItem(name, sport, size, grade)
+            vm = vm,
+            onSave = { name, sport, size, grade, photo ->
+                vm.addClosetItem(name, sport, size, grade, photo)
                 adding = false
             },
         )
@@ -395,8 +396,9 @@ fun S36GearCloset(nav: Nav) {
             title = editing.shortTitle,
             initial = editing,
             onDismiss = { editingId = -1L },
-            onSave = { name, _, size, grade ->
-                vm.updateClosetItem(editing.id, name, size, grade)
+            vm = vm,
+            onSave = { name, _, size, grade, photo ->
+                vm.updateClosetItem(editing.id, name, size, grade, photo)
                 editingId = -1L
             },
             onDelete = {
@@ -405,7 +407,7 @@ fun S36GearCloset(nav: Nav) {
             },
             onList = if (!editing.listed) ({
                 editingId = -1L
-                vm.startListing(Seed.ME, editing.id) { nav.to("s25") }
+                vm.startListing(editing.id) { nav.to("s25") }
             }) else null,
         )
     }
@@ -415,8 +417,9 @@ fun S36GearCloset(nav: Nav) {
 private fun ClosetItemDialog(
     title: String,
     initial: ClosetItem?,
+    vm: ExchangeSupplyViewModel,
     onDismiss: () -> Unit,
-    onSave: (String, String, String, Grade) -> Unit,
+    onSave: (String, String, String, Grade, String?) -> Unit,
     onDelete: (() -> Unit)? = null,
     onList: (() -> Unit)? = null,
 ) {
@@ -424,16 +427,32 @@ private fun ClosetItemDialog(
     var sport by rememberSaveable { mutableStateOf(initial?.sport ?: "Surfing") }
     var size by rememberSaveable { mutableStateOf(initial?.sizeLabel ?: "") }
     var grade by rememberSaveable { mutableIntStateOf(initial?.grade?.ordinal ?: 1) }
+    var photo by rememberSaveable { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val picker = rememberPhotoPicker(
+        title = "Photo of your gear",
+        onTaken = { file -> scope.launch { photo = vm.adoptPhoto(file) } },
+        onChosen = { uri -> scope.launch { photo = vm.importPhoto(uri) } },
+    )
 
     GearDialog(
         title = title,
         onDismiss = onDismiss,
         confirmLabel = if (initial == null) "Add" else "Save",
-        onConfirm = { onSave(name, sport, size, Grade.entries[grade]) },
+        onConfirm = { onSave(name, sport, size, Grade.entries[grade], photo) },
         confirmEnabled = name.trim().length >= 3,
         destructiveLabel = if (onDelete != null) "Remove" else null,
         onDestructive = onDelete,
     ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            val shown = photo ?: initial?.photo
+            if (shown != null) {
+                GearImage(shown, "Photo", Modifier.size(64.dp), GearShape.sm)
+                Spacer(Modifier.width(Space.s))
+            }
+            GearButton(if (shown != null) "Change photo" else "Add a photo", { picker.open() }, type = ButtonType.SECONDARY, size = ButtonSize.M, icon = Lucide.Camera)
+        }
+        VGap(Space.s)
         GearTextField(name, label = "What is it?", placeholder = "e.g. Rip Curl 4/3 wetsuit", onValueChange = { name = it })
         VGap(Space.s)
         if (initial == null) {

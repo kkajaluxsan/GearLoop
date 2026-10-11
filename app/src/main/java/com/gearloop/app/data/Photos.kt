@@ -6,13 +6,21 @@ import com.gearloop.app.R
 /**
  * Photographs as the database stores them: a stable key, not a resource id.
  *
- * `R.drawable` integers are assigned at build time and can change between two
- * builds of the same source, so a row written by one APK and read by the next
- * would point at a different picture. A key is a name, and this table is the one
- * place that turns it back into a resource — which also keeps every reference
- * explicit, so resource shrinking can see that the image is used.
+ * Two kinds of key exist. A bundled photograph is a short name such as
+ * `torq_1`, and this table is the one place that turns it back into a
+ * resource — `R.drawable` integers can change between two builds of the same
+ * source, so a row written by one APK and read by the next would otherwise
+ * point at a different picture. A picture taken or chosen on this phone is
+ * `file:photos/<name>.jpg`, relative to the app's private files, and is read
+ * by [PhotoStore].
  */
 object Photos {
+
+    /** What a listing with no photograph of its own shows. */
+    const val FALLBACK = "gear_flatlay"
+
+    /** Prefix of a key that names a file in the app's private storage. */
+    const val FILE_PREFIX = "file:"
 
     private val byKey: Map<String, Int> = mapOf(
         "torq_1" to R.drawable.photo_torq_1,
@@ -50,40 +58,19 @@ object Photos {
         "sport_kayaking" to R.drawable.sport_kayaking,
         "sport_badminton" to R.drawable.sport_badminton,
         "sport_football" to R.drawable.sport_football,
-    )
+    ) + MarketPhotos.byKey
 
-    private val byRes: Map<Int, String> = byKey.entries.associate { (k, v) -> v to k }
+    /** True for a picture taken or chosen on this phone. */
+    fun isFile(key: String): Boolean = key.startsWith(FILE_PREFIX)
 
-    /** What a key draws. An unknown key falls back to the neutral flat-lay. */
+    /** True for a key this build can draw from its own resources. */
+    fun isBundled(key: String): Boolean = key in byKey
+
+    /** What a bundled key draws. An unknown key falls back to the neutral flat-lay. */
     @DrawableRes
     fun res(key: String): Int = byKey[key] ?: R.drawable.photo_gear_flatlay
 
-    /** The key for a resource, for seeding the database from [Demo]. */
-    fun key(@DrawableRes res: Int): String =
-        requireNotNull(byRes[res]) { "photo resource $res has no key in Photos" }
-
-    fun resList(keys: List<String>): List<Int> = keys.map(::res)
-    fun keyList(res: List<Int>): List<String> = res.map(::key)
-
-    /** A sport's tile photograph — the stand-in for a new listing with no photos yet. */
-    @DrawableRes
-    fun forSport(sport: String): Int = res("sport_" + sport.lowercase().replace(' ', '_'))
-
-    /**
-     * The frame a guided capture records for each angle.
-     *
-     * The capture screen is a working record — timestamp, angle, both parties,
-     * validation — but it does not open the camera in this release, so each
-     * angle records the matching condition photograph from the dataset. The keys
-     * are the ones S-15 and S-18 always showed, so the evidence still lines up.
-     */
-    val sampleFrame: Map<String, String> = mapOf(
-        "Deck" to "torq_2",
-        "Bottom" to "torq_5",
-        "Nose" to "cond_3",
-        "Tail" to "cond_1",
-        "Rail L" to "torq_4",
-        "Rail R" to "torq_4",
-        "Fin box" to "cond_2",
-    )
+    /** A sport's tile photograph — the stand-in for a listing with no photos yet. */
+    fun forSport(sport: String): String =
+        ("sport_" + sport.lowercase().replace(' ', '_')).takeIf { it in byKey } ?: FALLBACK
 }

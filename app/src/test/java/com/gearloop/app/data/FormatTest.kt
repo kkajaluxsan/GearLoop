@@ -57,4 +57,21 @@ class FormatTest {
         assertEquals("Mon", relativeTime(LocalDateTime.of(2026, 8, 3, 10, 0), now))
         assertEquals("20 Jul", relativeTime(LocalDateTime.of(2026, 7, 20, 10, 0), now))
     }
+
+    @Test
+    fun `coordinates name the hemisphere rather than carry a sign`() {
+        assertEquals("9.7134°N, 80.0246°E", coordinates(9.71342, 80.02461))
+        assertEquals("37.4220°N, 122.0840°W", coordinates(37.422, -122.084))
+        assertEquals("33.8688°S, 151.2093°E", coordinates(-33.8688, 151.2093))
+    }
+
+    @Test
+    fun `a gap is said in its largest unit`() {
+        val minute = 60_000L
+        assertEquals("12 min", roughDuration(12 * minute))
+        assertEquals("3 h", roughDuration(200 * minute))
+        assertEquals("1 day", roughDuration(25 * 60 * minute))
+        assertEquals("5 days", roughDuration(7214 * minute))
+        assertEquals("5 days", roughDuration(-7214 * minute))
+    }
 }

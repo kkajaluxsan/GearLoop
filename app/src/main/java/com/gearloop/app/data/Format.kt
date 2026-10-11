@@ -48,6 +48,17 @@ fun km(value: Double, suffix: String = ""): String {
 /** `2.4 km away` — the form used wherever the distance is to someone else's gear. */
 fun kmAway(value: Double): String = km(value, "away")
 
+/**
+ * `9.7134°N, 80.0246°E` — four decimals is about 11 m, close enough to say
+ * where a photo was taken. A hemisphere letter, never a sign: "−122°E" is a
+ * contradiction a reader has to stop and resolve.
+ */
+fun coordinates(latitude: Double, longitude: Double): String = String.format(
+    java.util.Locale.ENGLISH, "%.4f°%s, %.4f°%s",
+    kotlin.math.abs(latitude), if (latitude >= 0) "N" else "S",
+    kotlin.math.abs(longitude), if (longitude >= 0) "E" else "W",
+)
+
 // ------------------------------------------------------------------ dates
 //
 // Milestone 03 made dates data rather than copy, so they are formatted here once
@@ -129,6 +140,17 @@ fun countdown(millis: Long): String {
         d > 0 -> "${d}d ${"%02d".format(h)}h ${"%02d".format(m)}m"
         h > 0 -> "${h}h ${"%02d".format(m)}m"
         else -> "${m}m"
+    }
+}
+
+/** `5 days`, `3 h`, `12 min` — a gap said the way a person would, in its largest unit. */
+fun roughDuration(millis: Long): String {
+    val min = kotlin.math.abs(millis) / 60_000
+    val days = min / (60 * 24)
+    return when {
+        days > 0 -> "$days day${if (days == 1L) "" else "s"}"
+        min >= 60 -> "${min / 60} h"
+        else -> "$min min"
     }
 }
 

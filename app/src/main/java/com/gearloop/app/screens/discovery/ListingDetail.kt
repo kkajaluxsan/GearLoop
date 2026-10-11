@@ -48,7 +48,6 @@ import com.gearloop.app.data.dateRange
 import com.gearloop.app.data.kmAway
 import com.gearloop.app.data.lkr
 import com.gearloop.app.data.repo.MoneyRepository
-import com.gearloop.app.data.repo.Seed
 import com.gearloop.app.nav.Nav
 import com.gearloop.app.ui.components.*
 import com.gearloop.app.ui.icons.GearIcon
@@ -107,6 +106,7 @@ fun S07ListingDetail(nav: Nav) {
         )
     }
     val ownerFirst = item.owner.name.substringBefore(' ')
+    val mine = item.owner.handle == vm.me
 
     Column(Modifier.fillMaxSize().background(GearSurface.app)) {
         Column(
@@ -178,6 +178,11 @@ fun S07ListingDetail(nav: Nav) {
                         style = GearType.dataS,
                         color = GearText.secondary,
                     )
+                }
+
+                if (item.description.isNotBlank()) {
+                    VGap(Space.m)
+                    Text(item.description, style = GearType.bodyM, color = GearText.body)
                 }
 
                 VGap(Space.l)
@@ -266,8 +271,7 @@ fun S07ListingDetail(nav: Nav) {
 
                 Section("Protection & deposit")
                 Banner(
-                    text = "${lkr(item.deposit)} deposit is a hold on your card, not a charge. " +
-                        "Released within 24 h of return. Plus or Pro protection replaces it.",
+                    text = "${lkr(item.deposit)} deposit, held on your card, not charged. Plus or Pro protection replaces it.",
                     kind = BannerKind.SAFETY,
                     action = "Compare protection plans",
                     onAction = { vm.startBooking(item) { nav.to("s09") } },
@@ -278,14 +282,16 @@ fun S07ListingDetail(nav: Nav) {
                 VGap(Space.l)
                 OwnerStrip(item.owner, onClick = { vm.showProfile(item.owner.handle); nav.to("s37") })
                 VGap(Space.sm)
-                GearButton(
-                    "Message $ownerFirst",
-                    { vm.openThread(item.owner.handle); nav.to("s33") },
-                    Modifier.fillMaxWidth(),
-                    type = ButtonType.SECONDARY,
-                    size = ButtonSize.M,
-                    icon = Lucide.MessageSquare,
-                )
+                if (!mine) {
+                    GearButton(
+                        "Message $ownerFirst",
+                        { vm.openThread(item.owner.handle); nav.to("s33") },
+                        Modifier.fillMaxWidth(),
+                        type = ButtonType.SECONDARY,
+                        size = ButtonSize.M,
+                        icon = Lucide.MessageSquare,
+                    )
+                }
 
                 Section("Reviews")
                 // Reviews of this listing's owner. An owner's review of a renter is
@@ -333,12 +339,16 @@ fun S07ListingDetail(nav: Nav) {
             // the exact thing the price breakdown on S-11 exists to avoid.
             priceCaption = "$days ${if (days == 1) "day" else "days"}, before extras",
         ) {
-            GearButton(
-                if (item.instantBook) "Book instantly" else "Request to book",
-                { vm.startBooking(item) { nav.to("s08") } },
-                size = ButtonSize.M,
-                icon = if (item.instantBook) Lucide.Zap else Lucide.Send,
-            )
+            if (mine) {
+                GearButton("Manage listing", { nav.to(com.gearloop.app.nav.Routes.MY_LISTINGS) }, size = ButtonSize.M, icon = Lucide.Pencil)
+            } else {
+                GearButton(
+                    if (item.instantBook) "Book instantly" else "Request to book",
+                    { vm.startBooking(item) { nav.to("s08") } },
+                    size = ButtonSize.M,
+                    icon = if (item.instantBook) Lucide.Zap else Lucide.Send,
+                )
+            }
         }
     }
 }
@@ -347,9 +357,9 @@ fun S07ListingDetail(nav: Nav) {
 private fun houseRules(item: GearItem): List<Pair<String, String>> = buildList {
     add("Cancellation" to MoneyRepository.CANCELLATION_RULE)
     if (item.sport in setOf("Surfing", "SUP", "Kayaking")) {
-        add("Rinse with fresh water" to "Salt kills fin boxes and fittings. There's a tap at the pickup point.")
+        add("Rinse with fresh water" to "There's a tap at the pickup point.")
     }
-    add("No commercial use" to "Personal use only — teaching or guiding for payment needs a different plan.")
+    add("No commercial use" to "Personal use only.")
 }
 
 @Composable
@@ -467,7 +477,7 @@ private fun HandoverBlock(item: GearItem) {
     buildList {
         add(Triple("Self pickup", "$area · meet the owner", "Free"))
         if (item.delivery) add(Triple("Delivery", "Within 5 km of $area", lkr(600)))
-        if (item.owner.handle == Seed.OWNER) add(Triple("GearPoint Nallur", "Collect any time 08:00–20:00", lkr(200)))
+        if (item.owner.area.contains("Nallur")) add(Triple("GearPoint Nallur", "Collect any time 08:00–20:00", lkr(200)))
     }.forEach { (name, detail, price) ->
         Row(
             Modifier.fillMaxWidth().padding(vertical = 9.dp),
@@ -518,19 +528,16 @@ fun MapThumb(
 private fun ReviewsBlock(item: GearItem, reviews: List<com.gearloop.app.data.ReviewEntry>, nav: Nav) {
     val owner = item.owner
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("★ ${owner.ratingText}", style = GearType.dataL, color = GearText.primary)
-        Spacer(Modifier.width(Space.s))
-        Text("${owner.reviews} reviews of ${owner.name.substringBefore(' ')}", style = GearType.bodyM, color = GearText.secondary)
-    }
-    // The category breakdown exists for the one host the dataset measured it for.
-    if (owner.handle == Seed.OWNER) {
-        VGap(Space.sm)
-        com.gearloop.app.data.Demo.subRatings.forEach { (label, value) ->
-            RatingBar(label, value / 5f, Modifier.padding(vertical = 4.dp), value = String.format("%.2f", value))
+        if (owner.reviews > 0) {
+            Text("★ ${owner.ratingText}", style = GearType.dataL, color = GearText.primary)
+            Spacer(Modifier.width(Space.s))
+            Text("${owner.reviews} reviews of ${owner.name.substringBefore(' ')}", style = GearType.bodyM, color = GearText.secondary)
+        } else {
+            Text("${owner.name.substringBefore(' ')} has no reviews yet", style = GearType.bodyM, color = GearText.secondary)
         }
     }
     VGap(Space.sm)
-    if (reviews.isEmpty()) {
+    if (reviews.isEmpty() && owner.reviews > 0) {
         Text("No written reviews for this item yet.", style = GearType.bodyS, color = GearText.tertiary)
         VGap(Space.sm)
     }

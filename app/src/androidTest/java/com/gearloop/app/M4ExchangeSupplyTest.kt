@@ -1,5 +1,6 @@
 package com.gearloop.app
 
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollToNodeAction
@@ -46,12 +47,12 @@ class M4ExchangeSupplyTest : FunctionalTest() {
     @Test
     fun tc51_match_is_hidden_and_restored() {
         launch("s19")
-        waitForText("We found 5 trades using your Burton Custom 158.")
+        waitForText("trades using your gear", substring = true)
         shot("s19_matches")
         c.toaster.undoDisplayMs = 5_000
         compose.onAllNodesWithText("Not for me")[0].tap() // the Santa Cruz, Dinesh
         until { db { exchange().match("m1") }?.hidden == true }
-        waitForText("We found 4 trades using your Burton Custom 158.")
+        until { !exists("Santa Cruz Chameleon M") }
         tapText("Undo")
         until { db { exchange().match("m1") }?.hidden == false }
         tapText("My swaps (1)")
@@ -113,7 +114,7 @@ class M4ExchangeSupplyTest : FunctionalTest() {
         tapText("Accept")
         until { proposal(Demo.SWAP_REF)?.status == ProposalStatus.ACCEPTED }
         assertTrue(db { money().walletTxns().first() }.any { it.label == "Escrow · ${Demo.SWAP_REF}" && it.amount == -Demo.BOOT_AMOUNT })
-        assertTrue(db { money().notifications().first() }.any { it.title == "Swap agreed with Dinesh" })
+        assertTrue(db { money().notifications().first() }.any { it.title == "Swap agreed" && it.ref == Demo.SWAP_REF })
         waitForText("Agreed. Arrange the handover.")
     }
 
@@ -157,6 +158,7 @@ class M4ExchangeSupplyTest : FunctionalTest() {
     /** TC-58 · S-24 · Read the derived dashboard; Update the service task, which Creates its calendar block. */
     @Test
     fun tc58_block_dates_task_creates_the_block() {
+        signInAs(Seed.OWNER) // the owner's console
         launch("s24")
         waitForText("Return overdue by 6 h")
         waitForText("Service due in 3 days")
@@ -170,6 +172,7 @@ class M4ExchangeSupplyTest : FunctionalTest() {
     /** TC-59 · S-24 · Create the owner's review of a renter; the task closes. */
     @Test
     fun tc59_owner_reviews_the_renter() {
+        signInAs(Seed.OWNER) // the owner's console
         launch("s24")
         tapText("Write it")
         waitForText("Review Mohamed")
@@ -182,24 +185,28 @@ class M4ExchangeSupplyTest : FunctionalTest() {
     /** TC-60 · S-24 → S-25 → S-26 · Create a listing, Update its title, size and photos, publish it into search. */
     @Test
     fun tc60_new_listing_is_published_into_search() {
+        signInAs(Seed.OWNER) // the owner's console
         launch("s24")
         tapText("Add a listing")
         waitForText("New listing")
         val id = drafts().single().id
         field("Title").performTextReplacement("Firewire Seaside 5'6\"")
         field("Size on the tag").performTextReplacement("5'6\"")
-        desc("Deck photo slot").tap()
+        // The slot opens the camera or the gallery; what either hands back goes in through this call.
+        runBlocking { c.exchange.setPhoto(0, "torq_2") }
         until { listing(id)?.photos?.size == 1 }
+        until { descExists("Deck photo slot") }
         shot("s25_photos")
         tapText("Continue")
         until { listing(id)?.title == "Firewire Seaside 5'6\"" }
         assertEquals("5'6\"", listing(id)!!.sizeLabel)
         tapText("Publish listing")
         until { listing(id)?.status == ListingStatus.PUBLISHED }
-        assertEquals(id, db { discovery().rails().first() }.filter { it.rail == "surf" }.minByOrNull { it.position }!!.listingId)
-        // Search had seven results before; the new board is the eighth.
+        // Published, it is in search for everyone else.
+        signInAs(Seed.ME)
         relaunch("s05")
-        waitForText("8 results")
+        until { c.discovery.searchable.value.any { it.id == id } }
+        waitForText(resultsLabel(resultCount()))
     }
 
     /** TC-61 · S-25 · Delete a draft that was never published; Delete a photo from a slot. */
@@ -208,8 +215,8 @@ class M4ExchangeSupplyTest : FunctionalTest() {
         launch("s25")
         until { drafts().size == 1 }
         val id = drafts().single().id
-        desc("Deck photo slot").tap()
-        desc("Bottom photo slot").tap()
+        // The camera or the gallery hands back a photo for each of the first two slots.
+        runBlocking { c.exchange.setPhoto(0, "torq_2"); c.exchange.setPhoto(1, "torq_5") }
         until { listing(id)?.photos?.size == 2 }
         desc("Bottom photo slot").tap()
         waitForText("Bottom photo")
@@ -222,21 +229,27 @@ class M4ExchangeSupplyTest : FunctionalTest() {
     /** TC-62 · S-24 → S-26 · Update a live listing's price from the dashboard insight. */
     @Test
     fun tc62_kayak_price_is_edited() {
-        val before = listing("kayak")!!.pricePerDay
+        signInAs(Seed.OWNER) // the owner's console
         launch("s24")
+        // The insight names whichever of the owner's listings has sat idle longest.
+        waitForText("hasn't been booked in 30 days", substring = true)
+        val idle = c.store.allItems.value.first { it.owner.handle == Seed.OWNER && exists("${it.shortTitle} hasn't been booked in 30 days") }
+        val before = listing(idle.id)!!.pricePerDay
         tapText("Review pricing")
-        waitForText(Demo.kayak.shortTitle)
+        waitForText("Set your price")
         shot("s26_pricing")
-        desc("Decrease").tap()
-        desc("Decrease").tap()
+        // The first stepper is the daily price; the second is the deposit.
+        compose.onAllNodesWithContentDescription("Decrease")[0].tap()
+        compose.onAllNodesWithContentDescription("Decrease")[0].tap()
         tapText("Save changes")
-        until { listing("kayak")?.pricePerDay == before - 200 }
-        assertEquals(ListingStatus.PUBLISHED, listing("kayak")!!.status)
+        until { listing(idle.id)?.pricePerDay == before - 200 }
+        assertEquals(ListingStatus.PUBLISHED, listing(idle.id)!!.status)
     }
 
     /** TC-63 · S-27 · Create a block on a free day and Delete it; booked days are not offered. */
     @Test
     fun tc63_calendar_block_and_unblock() {
+        signInAs(Seed.OWNER) // the owner's console
         launch("s27")
         tapText("Block dates")
         val torq = Demo.torq.shortTitle
@@ -255,6 +268,7 @@ class M4ExchangeSupplyTest : FunctionalTest() {
     /** TC-64 · S-27 · The overdue-return conflict is read from real bookings; Update the next booking onto unit #2. */
     @Test
     fun tc64_conflict_is_resolved_by_moving_units() {
+        signInAs(Seed.OWNER) // the owner's console
         launch("s27")
         waitForText("overdue", substring = true)
         tapText("Move to unit #2")
@@ -265,6 +279,7 @@ class M4ExchangeSupplyTest : FunctionalTest() {
     /** TC-65 · S-28 · Update one request to confirmed and another to declined. */
     @Test
     fun tc65_requests_are_accepted_and_declined() {
+        signInAs(Seed.OWNER) // the owner's console
         launch("s28")
         waitForText("Requests (3)")
         shot("s28_requests")
@@ -282,12 +297,14 @@ class M4ExchangeSupplyTest : FunctionalTest() {
     @Test
     fun tc66_request_round_trip_between_accounts() {
         val ref = book("trek") // not instant-book: a request
+        signInAs(Seed.OWNER) // the owner's console
         runBlocking { c.exchange.decline("GL-2K8R5"); c.exchange.decline("GL-7Q3M1") }
         launch("s28")
         waitForText("Requests (2)")
         compose.onAllNodesWithText("Accept")[0].tap()
         until { db { money().booking(ref) }?.status == BookingStatus.CONFIRMED }
         assertTrue(db { money().notifications().first() }.any { it.title == "Kavitha accepted your request" && it.ref == ref })
+        signInAs(Seed.ME)
         relaunch("s31")
         tapText("Upcoming (3)")
         waitForText("PICKUP IN 3 DAYS") // status badges are set in uppercase
@@ -325,12 +342,14 @@ class M4ExchangeSupplyTest : FunctionalTest() {
         tapText("List it")
         until { drafts().any { it.ownerHandle == Seed.ME } }
         val id = drafts().first { it.ownerHandle == Seed.ME }.id
-        waitForText("YOUR CLOSET")
+        waitForText("Show us the kayak")
+        // The camera or the gallery hands back the hero photo.
+        runBlocking { c.exchange.setPhoto(0, "torq_2") }
+        until { listing(id)?.photos?.size == 1 }
         tapText("Continue")
         tapText("Publish listing")
         until { listing(id)?.status == ListingStatus.PUBLISHED }
         until { closet().first { it.listingId == id }.listed }
-        waitForText("Gear closet")
         assertNull(drafts().firstOrNull { it.id == id })
     }
 }

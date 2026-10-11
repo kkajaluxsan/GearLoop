@@ -32,6 +32,7 @@ class SearchFilters(
     query: String = "",
     lengths: List<String> = emptyList(),
     grades: List<String> = emptyList(),
+    sports: List<String> = emptyList(),
 ) {
     var fitOnly by mutableStateOf(fitOnly)
     var instantOnly by mutableStateOf(instantOnly)
@@ -49,6 +50,9 @@ class SearchFilters(
     val lengths = lengths.toMutableStateList()
     val grades = grades.toMutableStateList()
 
+    /** Sports to show; empty means every sport. */
+    val sports = sports.toMutableStateList()
+
     val maxDistanceKm: Int get() = DISTANCES[distanceIndex.coerceIn(DISTANCES.indices)]
     fun priceAt(fraction: Float): Int =
         (PRICE_MIN + (PRICE_MAX - PRICE_MIN) * fraction).toInt() / 50 * 50
@@ -63,17 +67,22 @@ class SearchFilters(
             priceLower > 0f || priceUpper < 1f,
             lengths.isNotEmpty(),
             grades.isNotEmpty(),
+            sports.isNotEmpty(),
             query.isNotBlank(),
         ).count { it }
 
     val isDefault: Boolean get() = activeCount == 0
 
     fun apply(items: List<GearItem>): List<GearItem> = items.filter { item ->
-        val q = query.trim()
-        val matchesQuery = q.isEmpty() ||
-            item.title.contains(q, ignoreCase = true) ||
-            item.sport.contains(q, ignoreCase = true) ||
-            item.code.contains(q, ignoreCase = true)
+        // Every word has to appear somewhere — title, sport, item code, size,
+        // the owner's name or area, or the description — so "kayak nallur"
+        // finds Kavitha's kayak and "bike M" finds medium frames.
+        val words = query.trim().split(' ').filter { it.isNotEmpty() }
+        val haystack = listOf(
+            item.title, item.shortTitle, item.sport, item.code, item.sizeLabel,
+            item.owner.name, item.owner.area, item.description,
+        )
+        val matchesQuery = words.all { w -> haystack.any { it.contains(w, ignoreCase = true) } }
 
         // "Fits me" is a safety filter, not a preference one, so it excludes the
         // verdicts that mean the gear is the wrong size rather than merely not ideal.
@@ -92,7 +101,8 @@ class SearchFilters(
             item.pricePerDay >= floor &&
             item.pricePerDay <= ceiling &&
             (lengths.isEmpty() || lengths.any { item.sizeLabel.startsWith(it) }) &&
-            (grades.isEmpty() || grades.any { it.endsWith(item.grade.letter) })
+            (grades.isEmpty() || grades.any { it.endsWith(item.grade.letter) }) &&
+            (sports.isEmpty() || item.sport in sports)
     }
 
     /**
@@ -100,17 +110,18 @@ class SearchFilters(
      * shell watches to know when to write the sheet's state to the database.
      */
     val snapshot: List<Any>
-        get() = listOf(fitOnly, instantOnly, delivery, distanceIndex, priceLower, priceUpper, query, lengths.toList(), grades.toList())
+        get() = listOf(fitOnly, instantOnly, delivery, distanceIndex, priceLower, priceUpper, query, lengths.toList(), grades.toList(), sports.toList())
 
     /** An independent copy, for asking "what if" without touching the live one (S-39). */
     fun copy(): SearchFilters = SearchFilters(
-        fitOnly, instantOnly, delivery, distanceIndex, priceLower, priceUpper, query, lengths.toList(), grades.toList(),
+        fitOnly, instantOnly, delivery, distanceIndex, priceLower, priceUpper, query, lengths.toList(), grades.toList(), sports.toList(),
     )
 
     /** The active filters as a phrase, for an alert or a "wanted" post. */
     fun describe(): String {
         val parts = buildList {
             if (query.isNotBlank()) add("\"${query.trim()}\"")
+            if (sports.isNotEmpty()) add(sports.joinToString("/"))
             if (lengths.isNotEmpty()) add(lengths.joinToString("/"))
             if (grades.isNotEmpty()) add(grades.joinToString("/"))
             if (fitOnly) add("fits me")
@@ -135,6 +146,8 @@ class SearchFilters(
         lengths.addAll(saved.lengths)
         grades.clear()
         grades.addAll(saved.grades)
+        sports.clear()
+        sports.addAll(saved.sports)
     }
 
     fun reset() {
@@ -147,6 +160,7 @@ class SearchFilters(
         query = ""
         lengths.clear()
         grades.clear()
+        sports.clear()
     }
 
     /**
@@ -161,6 +175,7 @@ class SearchFilters(
         when {
             lengths.isNotEmpty() -> lengths.clear()
             grades.isNotEmpty() -> grades.clear()
+            sports.isNotEmpty() -> sports.clear()
             priceLower > 0f || priceUpper < 1f -> { priceLower = 0f; priceUpper = 1f }
             fitOnly -> fitOnly = false
             instantOnly -> instantOnly = false
@@ -173,19 +188,22 @@ class SearchFilters(
     }
 
     companion object {
-        const val PRICE_MIN = 500
-        const val PRICE_MAX = 5_000
+        const val PRICE_MIN = 0
+        const val PRICE_MAX = 6_000
         val DISTANCES = listOf(2, 5, 10, 25)
 
-        /** 5 km — wide enough that the app opens showing results, not an apology. */
-        const val DEFAULT_DISTANCE = 1
+        /** 10 km — the whole of Jaffna town and its suburbs, so search opens on results. */
+        const val DEFAULT_DISTANCE = 2
+
+        /** The slider position for [price], the inverse of [priceAt]. */
+        fun fractionOf(price: Int): Float = ((price - PRICE_MIN).toFloat() / (PRICE_MAX - PRICE_MIN)).coerceIn(0f, 1f)
 
         val Saver: Saver<SearchFilters, List<Any>> = Saver(
             save = {
                 listOf(
                     it.fitOnly, it.instantOnly, it.delivery, it.distanceIndex,
                     it.priceLower, it.priceUpper, it.query,
-                    it.lengths.toList(), it.grades.toList(),
+                    it.lengths.toList(), it.grades.toList(), it.sports.toList(),
                 )
             },
             restore = {
@@ -200,6 +218,7 @@ class SearchFilters(
                     query = it[6] as String,
                     lengths = it[7] as List<String>,
                     grades = it[8] as List<String>,
+                    sports = it[9] as List<String>,
                 )
             },
         )

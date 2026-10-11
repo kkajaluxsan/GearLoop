@@ -1,13 +1,15 @@
 package com.gearloop.app.data.repo
 
 import androidx.room.withTransaction
-import com.gearloop.app.data.DemoClock
+import com.gearloop.app.data.AppClock
+import com.gearloop.app.data.Fit
 import com.gearloop.app.data.GearItem
 import com.gearloop.app.data.SearchFilters
 import com.gearloop.app.data.StarDistribution
 import com.gearloop.app.data.dayMonth
 import com.gearloop.app.data.db.GearDatabase
 import com.gearloop.app.data.db.ReviewEntity
+import com.gearloop.app.data.db.SavedListingEntity
 import com.gearloop.app.data.db.SearchAlertEntity
 import com.gearloop.app.data.db.SearchPrefsEntity
 import com.gearloop.app.data.db.SportInterestEntity
@@ -17,21 +19,17 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.time.LocalDate
 
 /**
- * Member 1 — Fit & Discovery.
+ * Fit & Discovery: the getting-started screens, home, search, filters, the
+ * listing, the map, the trip planner, alerts and reviews.
  *
- * S-01 Intent · S-02 Fit profile · S-03 Sports · S-04 Home · S-05 Search ·
- * S-06 Filters · S-07 Listing · S-29 Map · S-30 Trip planner · S-39 No results ·
- * S-42 Reviews.
- *
- * The profile written on S-02 is the one every fit stamp in the app reads, so
- * changing a height here re-judges the Torq on S-04, S-05, S-07 and S-28.
+ * The profile written on the fit screen is the one every fit stamp in the app
+ * reads, so changing a height re-judges every listing on every screen.
  */
 class DiscoveryRepository(
     private val db: GearDatabase,
@@ -40,6 +38,7 @@ class DiscoveryRepository(
     private val scope: CoroutineScope,
 ) {
     private val dao = db.discovery()
+    private val me: String get() = session.handle
 
     private fun <T> kotlinx.coroutines.flow.Flow<T>.hot(initial: T): StateFlow<T> =
         stateIn(scope, SharingStarted.Eagerly, initial)
@@ -50,20 +49,36 @@ class DiscoveryRepository(
 
     val sports: StateFlow<List<String>> = store.sportRows.map { rows -> rows.map { it.sport } }.hot(emptyList())
 
-    /** Everything a renter can search, in catalogue order. */
+    /** Everything a member can search, in catalogue order. */
     val searchable: StateFlow<List<GearItem>> = store.published
 
-    /** The three rails on S-04, each in the order the design set them. */
-    val rails: StateFlow<Map<String, List<GearItem>>> = combine(store.railRows, store.published) { entries, items ->
-        val byId = items.associateBy { it.id }
-        entries.groupBy { it.rail }.mapValues { (_, rail) ->
-            rail.sortedBy { it.position }.mapNotNull { byId[it.listingId] }
-        }
+    /**
+     * The three rails on home, worked out from the listings themselves rather
+     * than curated: what is free near you, what fits you, and what is new in the
+     * sport you picked first.
+     */
+    val rails: StateFlow<Map<String, List<GearItem>>> = combine(store.published, sports) { items, picked ->
+        val near = items.filter { it.available }.sortedBy { it.distanceKm }.take(8)
+        val fits = items.filter { it.fit in setOf(Fit.PERFECT, Fit.GOOD) }
+            .sortedWith(compareBy({ it.fit.ordinal }, { it.distanceKm })).take(8)
+        val sport = railSport(picked, items)
+        val fresh = items.filter { it.sport == sport }.sortedByDescending { createdAt(it.id) }.take(8)
+        mapOf("weekend" to near, "fits" to fits, "new" to fresh)
     }.hot(emptyMap())
+
+    /** The sport the "New in" rail is about: the first one the member picked that has listings. */
+    val railSportName: StateFlow<String> = combine(store.published, sports) { items, picked -> railSport(picked, items) }.hot("Surfing")
+
+    private fun railSport(picked: List<String>, items: List<GearItem>): String =
+        picked.firstOrNull { s -> items.any { it.sport == s } } ?: "Surfing"
+
+    private fun createdAt(id: String): Long = store.listingRows.value.firstOrNull { it.id == id }?.createdAt ?: 0
 
     val selected: StateFlow<GearItem?> = combine(session.session, store.allItems) { s, items ->
         items.firstOrNull { it.id == s.listingId } ?: items.firstOrNull()
     }.hot(null)
+
+    val saved: StateFlow<List<GearItem>> = store.allItems.map { list -> list.filter { it.saved } }.hot(emptyList())
 
     val unreadNotifications: StateFlow<Int> =
         store.notificationRows.map { rows -> rows.count { it.unread } }.hot(0)
@@ -90,7 +105,7 @@ class DiscoveryRepository(
     }.hot(null)
 
     val alerts: StateFlow<List<Alert>> = store.alertRows.map { rows ->
-        rows.map { Alert(it.id, it.kind, it.summary, DemoClock.fromMillis(it.createdAt)) }
+        rows.map { Alert(it.id, it.kind, it.summary, AppClock.fromMillis(it.createdAt)) }
     }.hot(emptyList())
 
     fun item(id: String): GearItem? = store.item(id)
@@ -105,7 +120,7 @@ class DiscoveryRepository(
         val water = setOf("Surfing", "SUP", "Kayaking", "Swimming")
         fun group(s: String) = if (s in water) "water" else s
         return store.published.value
-            .filter { it.id != item.id && it.owner.handle != Seed.ME }
+            .filter { it.id != item.id }
             .sortedWith(
                 compareBy<GearItem>(
                     { if (it.sport == item.sport) 0 else if (group(it.sport) == group(item.sport)) 1 else 2 },
@@ -115,59 +130,67 @@ class DiscoveryRepository(
             .take(limit)
     }
 
-    /** The owner's own published listings, for the public profile. */
-    fun listingsBy(handle: String): List<GearItem> = store.published.value.filter { it.owner.handle == handle }
+    /** A member's own published listings, for their public profile. */
+    fun listingsBy(handle: String): List<GearItem> =
+        store.allItems.value.filter { it.owner.handle == handle && it.status == com.gearloop.app.data.ListingStatus.PUBLISHED }
 
     // ============================================================ writes
 
     fun select(listingId: String) = session.selectListing(listingId)
 
-    /** S-01 — Update. */
-    suspend fun setIntent(intent: Int) = dao.setIntent(intent)
+    suspend fun setIntent(intent: Int) = dao.setIntent(me, intent)
 
-    /** S-02 — Update. Height and weight are clamped to the ranges the steppers allow. */
+    /** Height and weight are clamped to the ranges the steppers allow. */
     suspend fun saveMeasurements(heightCm: Int, weightKg: Int, metric: Boolean) =
-        dao.setMeasurements(heightCm.coerceIn(130, 215), weightKg.coerceIn(35, 160), metric)
+        dao.setMeasurements(me, heightCm.coerceIn(130, 215), weightKg.coerceIn(35, 160), metric)
 
-    /** S-02 — Delete. Every verdict falls back to "add your height" (FR-03). */
+    /** Every verdict falls back to "add your height" (FR-03). */
     suspend fun clearMeasurements() {
-        val metric = dao.profileNow()?.metric ?: true
-        dao.setMeasurements(null, null, metric)
+        val metric = dao.profileNow(me)?.metric ?: true
+        dao.setMeasurements(me, null, null, metric)
     }
 
-    /** S-03 — Create or Delete, depending on whether it was already chosen. */
+    /** The getting-started screens are done; the next launch opens on home. */
+    suspend fun finishOnboarding() = dao.setOnboarded(me)
+
+    /** Create or Delete, depending on whether it was already chosen. */
     suspend fun toggleSport(sport: String) {
-        if (dao.hasSport(sport) > 0) dao.removeSport(sport)
-        else dao.addSport(SportInterestEntity(sport, DemoClock.nowMillis()))
+        if (dao.hasSport(me, sport) > 0) dao.removeSport(me, sport)
+        else dao.addSport(SportInterestEntity(me, sport, AppClock.nowMillis()))
     }
 
-    /** S-04, S-05, S-07, S-29, S-37 — Update. Read from the table, so a quick double tap toggles twice. */
+    /** Read from the table, so a quick double tap toggles twice. */
     suspend fun toggleSaved(listingId: String) {
-        val current = dao.listing(listingId) ?: return
-        dao.setSaved(listingId, !current.saved)
+        if (dao.isSaved(me, listingId) > 0) dao.unsave(me, listingId)
+        else dao.save(SavedListingEntity(me, listingId, AppClock.nowMillis()))
     }
 
-    // ---- S-06: the filter sheet's state, kept between launches
+    // ---- the filter sheet's state, kept between launches
 
-    suspend fun loadSearchPrefs(): SearchPrefsEntity? = dao.searchPrefs()
+    suspend fun loadSearchPrefs(): SearchPrefsEntity? = dao.searchPrefs(me)
 
-    suspend fun saveSearchPrefs(filters: SearchFilters) = dao.saveSearchPrefs(
-        SearchPrefsEntity(
-            fitOnly = filters.fitOnly,
-            instantOnly = filters.instantOnly,
-            delivery = filters.delivery,
-            distanceIndex = filters.distanceIndex,
-            priceLower = filters.priceLower,
-            priceUpper = filters.priceUpper,
-            query = filters.query,
-            lengths = filters.lengths.toList(),
-            grades = filters.grades.toList(),
-        ),
-    )
+    suspend fun saveSearchPrefs(filters: SearchFilters) {
+        if (me.isEmpty()) return
+        dao.saveSearchPrefs(
+            SearchPrefsEntity(
+                handle = me,
+                fitOnly = filters.fitOnly,
+                instantOnly = filters.instantOnly,
+                delivery = filters.delivery,
+                distanceIndex = filters.distanceIndex,
+                priceLower = filters.priceLower,
+                priceUpper = filters.priceUpper,
+                query = filters.query,
+                lengths = filters.lengths.toList(),
+                grades = filters.grades.toList(),
+                sports = filters.sports.toList(),
+            ),
+        )
+    }
 
-    suspend fun clearSearchPrefs() = dao.clearSearchPrefs()
+    suspend fun clearSearchPrefs() = dao.clearSearchPrefs(me)
 
-    // ---- S-42: reviews
+    // ---- reviews
 
     /**
      * Create a review. The subject's histogram moves with it, so the average and
@@ -180,19 +203,19 @@ class DiscoveryRepository(
                 ReviewEntity(
                     listingId = listingId,
                     subjectHandle = listing.ownerHandle,
-                    authorHandle = Seed.ME,
-                    date = dayMonth(DemoClock.today) + " " + DemoClock.today.year,
+                    authorHandle = me,
+                    date = dayMonth(AppClock.today) + " " + AppClock.today.year,
                     stars = stars.coerceIn(1, 5),
                     body = body.trim(),
                     photos = emptyList(),
                     ownerResponse = null,
                     bookingRef = bookingRef,
-                    createdAt = DemoClock.nowMillis(),
+                    createdAt = AppClock.nowMillis(),
                 ),
             )
             adjustRating(listing.ownerHandle, stars, +1)
             if (bookingRef != null) {
-                db.money().booking(bookingRef)?.let { db.money().upsertBooking(it.copy(rating = stars, updatedAt = DemoClock.nowMillis())) }
+                db.money().booking(bookingRef)?.let { db.money().upsertBooking(it.copy(rating = stars, updatedAt = AppClock.nowMillis())) }
             }
             id
         }
@@ -201,27 +224,24 @@ class DiscoveryRepository(
     private val ratings = Mutex()
 
     /**
-     * S-18 — the stars on the settlement screen are a review without words:
-     * Create one, Update it by picking again, or Delete it with null. It goes
-     * through [addReview] and [deleteReview], so S-31, S-42 and the owner's
-     * histogram all agree with it.
+     * The stars on the settlement screen are a review without words: Create
+     * one, Update it by picking again, or Delete it with null.
      */
     suspend fun rateBooking(bookingRef: String, stars: Int?) = ratings.withLock {
         val booking = db.money().booking(bookingRef) ?: return@withLock
-        dao.reviews().first().firstOrNull { it.bookingRef == bookingRef && it.authorHandle == Seed.ME }
-            ?.let { deleteReview(it.id) }
+        dao.reviewFor(bookingRef, me)?.let { deleteReview(it.id) }
         if (stars != null) addReview(booking.listingId, stars, "", bookingRef)
     }
 
     /** Delete one of your own reviews, and take it back out of the histogram. */
     suspend fun deleteReview(id: Long) {
         val review = dao.review(id) ?: return
-        if (review.authorHandle != Seed.ME) return
+        if (review.authorHandle != me) return
         db.withTransaction {
             dao.deleteReview(id)
             adjustRating(review.subjectHandle, review.stars, -1)
             review.bookingRef?.let { ref ->
-                db.money().booking(ref)?.let { db.money().upsertBooking(it.copy(rating = null, updatedAt = DemoClock.nowMillis())) }
+                db.money().booking(ref)?.let { db.money().upsertBooking(it.copy(rating = null, updatedAt = AppClock.nowMillis())) }
             }
         }
     }
@@ -241,17 +261,31 @@ class DiscoveryRepository(
         dao.upsertPerson(updated)
     }
 
-    // ---- S-30: the trip planner
+    // ---- the trip planner
 
     suspend fun setTripAdults(adults: Int) {
-        val t = dao.tripNow() ?: return
+        val t = dao.tripNow(me) ?: return
         dao.upsertTrip(t.copy(adults = adults.coerceIn(1, 8)))
     }
 
     suspend fun toggleTripSport(sport: String) {
-        val t = dao.tripNow() ?: return
+        val t = dao.tripNow(me) ?: return
         val next = if (sport in t.sports) t.sports - sport else t.sports + sport
         dao.upsertTrip(t.copy(sports = next))
+    }
+
+    suspend fun setTripDestination(destination: String) {
+        val t = dao.tripNow(me) ?: return
+        if (destination.isBlank()) return
+        dao.upsertTrip(t.copy(destination = destination.trim()))
+    }
+
+    /** Move the trip to start on [start] and last [days] days. Never in the past. */
+    suspend fun setTripDates(start: LocalDate, days: Int) {
+        val t = dao.tripNow(me) ?: return
+        val from = if (start.isBefore(AppClock.today)) AppClock.today else start
+        val length = days.coerceIn(1, 21)
+        dao.upsertTrip(t.copy(startDay = from.toEpochDay(), endDay = from.plusDays(length - 1L).toEpochDay()))
     }
 
     /** Put a "worth adding" item in the kit, or take it out again. */
@@ -271,14 +305,14 @@ class DiscoveryRepository(
     /** Create a rental in the kit from a listing. */
     suspend fun addTripRental(listingId: String, note: String) {
         val item = dao.listing(listingId) ?: return
-        val position = dao.maxTripPosition("RENT") + 1
-        dao.insertTripItem(TripItemEntity(section = "RENT", label = item.shortTitle, listingId = listingId, note = note, price = 0, added = true, position = position))
+        val position = dao.maxTripPosition(me, "RENT") + 1
+        dao.insertTripItem(TripItemEntity(handle = me, section = "RENT", label = item.shortTitle, listingId = listingId, note = note, price = 0, added = true, position = position))
     }
 
-    // ---- S-39: alerts and wanted posts
+    // ---- alerts and wanted posts
 
     suspend fun createAlert(kind: String, summary: String): Long =
-        dao.insertAlert(SearchAlertEntity(kind = kind, summary = summary, createdAt = DemoClock.nowMillis()))
+        dao.insertAlert(SearchAlertEntity(handle = me, kind = kind, summary = summary, createdAt = AppClock.nowMillis()))
 
     suspend fun deleteAlert(id: Long) = dao.deleteAlert(id)
 }

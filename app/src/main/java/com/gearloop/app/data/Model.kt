@@ -1,7 +1,5 @@
 package com.gearloop.app.data
 
-import androidx.annotation.DrawableRes
-
 /**
  * The shapes behind the screens.
  *
@@ -19,6 +17,9 @@ import androidx.annotation.DrawableRes
 
 enum class TrustTier(val label: String) { BRONZE("BRONZE"), SILVER("SILVER"), GOLD("GOLD") }
 
+/** What an account may do. Admins also see the claims desk. */
+enum class AccountRole { MEMBER, ADMIN }
+
 /** The fit ramp is its own scale — fit is a different system from status. */
 enum class Fit(val label: String) {
     PERFECT("PERFECT FIT"),
@@ -31,8 +32,9 @@ enum class Fit(val label: String) {
 
 enum class Grade(val letter: String, val summary: String) {
     A("A", "As new — no marks, everything original"),
-    B("B", "Good — light pressure dings on deck, fully watertight"),
-    C("C", "Worn — repaired dings, still structurally sound"),
+    // Said of any gear, not only a board: these show on a tent's listing too.
+    B("B", "Good — light marks from use, works as it should"),
+    C("C", "Worn — visible wear or repairs, still safe and sound"),
 }
 
 data class Person(
@@ -71,7 +73,8 @@ data class GearItem(
     val grade: Grade,
     val pricePerDay: Int,
     val distanceKm: Double,
-    @param:DrawableRes val photos: List<Int>,
+    /** Photo keys: a bundled photograph or a picture taken on this phone (see [Photos]). */
+    val photos: List<String>,
     val owner: Person,
     val fit: Fit,
     val sport: String,
@@ -94,7 +97,7 @@ data class GearItem(
     val specs: List<SpecRow> = emptyList(),
     val included: List<String> = emptyList(),
     val excluded: List<String> = emptyList(),
-    @param:DrawableRes val conditionPhotos: List<Int> = emptyList(),
+    val conditionPhotos: List<String> = emptyList(),
     val conditionNote: String = "",
     val conditionDate: String = "",
     /** Extras that travel with every booking of this item, priced per day. */
@@ -102,10 +105,11 @@ data class GearItem(
     /** 3+, 7+ and 14+ day discounts, on or off. */
     val discounts: List<Boolean> = listOf(true, true, false),
     val waiveDepositWithPlus: Boolean = false,
+    /** The owner's own words about it. */
+    val description: String = "",
 ) {
     /** The first photograph; a draft with none yet shows the neutral flat-lay. */
-    @get:DrawableRes
-    val hero: Int get() = photos.firstOrNull() ?: com.gearloop.app.R.drawable.photo_gear_flatlay
+    val hero: String get() = photos.firstOrNull() ?: Photos.FALLBACK
 
     /** `6'6" · GRADE B · TQ-4471` — the full tag, for detail and list views. */
     val tagLine: String get() = "$sizeLabel · GRADE ${grade.letter} · $code"
@@ -196,7 +200,7 @@ data class ReviewEntry(
     val date: String,
     val stars: Int,
     val body: String,
-    @param:DrawableRes val photos: List<Int> = emptyList(),
+    val photos: List<String> = emptyList(),
     val ownerResponse: String? = null,
 )
 
@@ -212,7 +216,7 @@ data class TimelineNode(
 data class CaptureAngle(
     val label: String,
     val state: State,
-    @get:DrawableRes val photo: Int? = null,
+    val photo: String? = null,
 ) {
     enum class State { CAPTURED, ACTIVE, PENDING }
 }
@@ -281,7 +285,7 @@ data class NotificationItem(
     val time: String,
     val unread: Boolean = false,
 ) {
-    enum class Kind { BOOKING, SWAP, SAFETY, PAYOUT, REVIEW }
+    enum class Kind { BOOKING, SWAP, SAFETY, PAYOUT, REVIEW, MESSAGE }
 }
 
 data class ChatMessage(

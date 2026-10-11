@@ -13,65 +13,121 @@ import com.gearloop.app.data.ProposalStatus
 import kotlinx.coroutines.flow.Flow
 
 /*
- * Data access, one DAO per member area. Reads are Flows, so a screen observing
- * a table redraws when any other screen writes to it — that is what makes a
- * request accepted on S-28 appear as confirmed on S-31 without either screen
- * knowing about the other. Writes are suspend functions and never run on the
- * main thread.
+ * Data access, one DAO per area. Reads are Flows, so a screen observing a table
+ * redraws when any other screen writes to it — that is what makes a request
+ * accepted in the owner's inbox appear as confirmed in the renter's rentals
+ * without either screen knowing about the other. Writes are suspend functions
+ * and never run on the main thread.
+ *
+ * Tables that belong to one member are read by handle on the write paths; the
+ * observing flows read every row and the store narrows them to whoever is signed
+ * in, because the dataset is small and the narrowing has to follow sign-in.
  */
 
-// ============================================================ M1 · Fit & Discovery
+// ============================================================ accounts
+
+@Dao
+interface AccountDao {
+
+    @Query("SELECT * FROM account ORDER BY lastLoginAt DESC")
+    fun accounts(): Flow<List<AccountEntity>>
+
+    @Query("SELECT * FROM account WHERE email = :email LIMIT 1")
+    suspend fun byEmail(email: String): AccountEntity?
+
+    @Query("SELECT * FROM account WHERE handle = :handle")
+    suspend fun byHandle(handle: String): AccountEntity?
+
+    @Query("SELECT COUNT(*) FROM account")
+    suspend fun count(): Int
+
+    @Upsert
+    suspend fun upsert(account: AccountEntity)
+
+    @Query("UPDATE account SET lastLoginAt = :at WHERE handle = :handle")
+    suspend fun touch(handle: String, at: Long)
+
+    @Query("DELETE FROM account WHERE handle = :handle")
+    suspend fun delete(handle: String)
+
+    // ---- what deleting an account removes: everything that was only theirs
+    @Query("DELETE FROM sport_interest WHERE handle = :handle") suspend fun deleteSports(handle: String)
+    @Query("DELETE FROM search_prefs WHERE handle = :handle") suspend fun deletePrefs(handle: String)
+    @Query("DELETE FROM saved_listing WHERE handle = :handle") suspend fun deleteSaved(handle: String)
+    @Query("DELETE FROM trip WHERE handle = :handle") suspend fun deleteTrip(handle: String)
+    @Query("DELETE FROM trip_item WHERE handle = :handle") suspend fun deleteTripItems(handle: String)
+    @Query("DELETE FROM search_alert WHERE handle = :handle") suspend fun deleteAlerts(handle: String)
+    @Query("DELETE FROM wallet_txn WHERE handle = :handle") suspend fun deleteTxns(handle: String)
+    @Query("DELETE FROM notification WHERE handle = :handle") suspend fun deleteNotifications(handle: String)
+    @Query("DELETE FROM verification_step WHERE handle = :handle") suspend fun deleteVerification(handle: String)
+    @Query("DELETE FROM badge WHERE handle = :handle") suspend fun deleteBadges(handle: String)
+    @Query("DELETE FROM swap_match WHERE handle = :handle") suspend fun deleteMatches(handle: String)
+    @Query("DELETE FROM closet_item WHERE ownerHandle = :handle") suspend fun deleteCloset(handle: String)
+    @Query("DELETE FROM owner_task WHERE handle = :handle") suspend fun deleteTasks(handle: String)
+    @Query("UPDATE listing SET status = 'PAUSED' WHERE ownerHandle = :handle") suspend fun pauseListings(handle: String)
+}
+
+// ============================================================ discovery
 
 @Dao
 interface DiscoveryDao {
 
-    // ---- people and the signed-in profile
+    // ---- people and profiles
     @Query("SELECT * FROM person")
     fun people(): Flow<List<PersonEntity>>
 
     @Query("SELECT * FROM person WHERE handle = :handle")
     suspend fun person(handle: String): PersonEntity?
 
+    @Query("SELECT COUNT(*) FROM person WHERE handle = :handle")
+    suspend fun personExists(handle: String): Int
+
     @Upsert
     suspend fun upsertPerson(person: PersonEntity)
 
-    @Query("SELECT * FROM profile WHERE id = 1")
-    fun profile(): Flow<ProfileEntity?>
+    @Query("SELECT * FROM profile")
+    fun profiles(): Flow<List<ProfileEntity>>
 
-    @Query("SELECT * FROM profile WHERE id = 1")
-    suspend fun profileNow(): ProfileEntity?
+    @Query("SELECT * FROM profile WHERE handle = :handle")
+    suspend fun profileNow(handle: String): ProfileEntity?
 
     @Upsert
     suspend fun upsertProfile(profile: ProfileEntity)
 
-    @Query("UPDATE profile SET intent = :intent WHERE id = 1")
-    suspend fun setIntent(intent: Int)
+    @Query("UPDATE profile SET intent = :intent WHERE handle = :handle")
+    suspend fun setIntent(handle: String, intent: Int)
 
-    @Query("UPDATE profile SET heightCm = :heightCm, weightKg = :weightKg, metric = :metric WHERE id = 1")
-    suspend fun setMeasurements(heightCm: Int?, weightKg: Int?, metric: Boolean)
+    @Query("UPDATE profile SET heightCm = :heightCm, weightKg = :weightKg, metric = :metric WHERE handle = :handle")
+    suspend fun setMeasurements(handle: String, heightCm: Int?, weightKg: Int?, metric: Boolean)
 
-    // ---- sport interests (S-03)
+    @Query("UPDATE profile SET onboarded = 1 WHERE handle = :handle")
+    suspend fun setOnboarded(handle: String)
+
+    @Query("DELETE FROM profile WHERE handle = :handle")
+    suspend fun deleteProfile(handle: String)
+
+    // ---- sport interests
     @Query("SELECT * FROM sport_interest ORDER BY addedAt")
     fun sports(): Flow<List<SportInterestEntity>>
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun addSport(sport: SportInterestEntity)
 
-    @Query("SELECT COUNT(*) FROM sport_interest WHERE sport = :sport")
-    suspend fun hasSport(sport: String): Int
+    @Query("SELECT COUNT(*) FROM sport_interest WHERE handle = :handle AND sport = :sport")
+    suspend fun hasSport(handle: String, sport: String): Int
 
-    @Query("DELETE FROM sport_interest WHERE sport = :sport")
-    suspend fun removeSport(sport: String)
+    @Query("DELETE FROM sport_interest WHERE handle = :handle AND sport = :sport")
+    suspend fun removeSport(handle: String, sport: String)
 
-    // ---- filter sheet (S-06)
-    @Query("SELECT * FROM search_prefs WHERE id = 1")
-    suspend fun searchPrefs(): SearchPrefsEntity?
+    // ---- filter sheet
+    @Query("SELECT * FROM search_prefs WHERE handle = :handle")
+    suspend fun searchPrefs(handle: String): SearchPrefsEntity?
 
     @Upsert
     suspend fun saveSearchPrefs(prefs: SearchPrefsEntity)
 
-    @Query("DELETE FROM search_prefs")
-    suspend fun clearSearchPrefs()
+    @Query("DELETE FROM search_prefs WHERE handle = :handle")
+    suspend fun clearSearchPrefs(handle: String)
 
     // ---- listings
     @Query("SELECT * FROM listing ORDER BY sortOrder, createdAt")
@@ -80,11 +136,17 @@ interface DiscoveryDao {
     @Query("SELECT * FROM listing WHERE id = :id")
     suspend fun listing(id: String): ListingEntity?
 
+    @Query("SELECT * FROM listing WHERE ownerHandle = :handle")
+    suspend fun listingsOf(handle: String): List<ListingEntity>
+
+    @Query("SELECT COUNT(*) FROM listing WHERE code = :code")
+    suspend fun codeCount(code: String): Int
+
+    @Query("SELECT * FROM listing WHERE code = :code LIMIT 1")
+    suspend fun listingByCode(code: String): ListingEntity?
+
     @Upsert
     suspend fun upsertListing(listing: ListingEntity)
-
-    @Query("UPDATE listing SET saved = :saved WHERE id = :id")
-    suspend fun setSaved(id: String, saved: Boolean)
 
     @Query("UPDATE listing SET status = :status WHERE id = :id")
     suspend fun setListingStatus(id: String, status: ListingStatus)
@@ -92,16 +154,20 @@ interface DiscoveryDao {
     @Query("DELETE FROM listing WHERE id = :id")
     suspend fun deleteListing(id: String)
 
-    @Query("SELECT * FROM rail_entry ORDER BY rail, position")
-    fun rails(): Flow<List<RailEntryEntity>>
+    // ---- saved listings
+    @Query("SELECT * FROM saved_listing")
+    fun saved(): Flow<List<SavedListingEntity>>
 
-    @Upsert
-    suspend fun upsertRailEntry(entry: RailEntryEntity)
+    @Query("SELECT COUNT(*) FROM saved_listing WHERE handle = :handle AND listingId = :listingId")
+    suspend fun isSaved(handle: String, listingId: String): Int
 
-    @Query("UPDATE rail_entry SET position = position + 1 WHERE rail = :rail")
-    suspend fun shiftRail(rail: String)
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun save(row: SavedListingEntity)
 
-    // ---- reviews (S-42)
+    @Query("DELETE FROM saved_listing WHERE handle = :handle AND listingId = :listingId")
+    suspend fun unsave(handle: String, listingId: String)
+
+    // ---- reviews
     @Query("SELECT * FROM review ORDER BY createdAt DESC")
     fun reviews(): Flow<List<ReviewEntity>>
 
@@ -111,15 +177,18 @@ interface DiscoveryDao {
     @Query("SELECT * FROM review WHERE id = :id")
     suspend fun review(id: Long): ReviewEntity?
 
+    @Query("SELECT * FROM review WHERE bookingRef = :ref AND authorHandle = :author LIMIT 1")
+    suspend fun reviewFor(ref: String, author: String): ReviewEntity?
+
     @Query("DELETE FROM review WHERE id = :id")
     suspend fun deleteReview(id: Long)
 
-    // ---- trip planner (S-30)
-    @Query("SELECT * FROM trip WHERE id = 1")
-    fun trip(): Flow<TripEntity?>
+    // ---- trip planner
+    @Query("SELECT * FROM trip")
+    fun trips(): Flow<List<TripEntity>>
 
-    @Query("SELECT * FROM trip WHERE id = 1")
-    suspend fun tripNow(): TripEntity?
+    @Query("SELECT * FROM trip WHERE handle = :handle")
+    suspend fun tripNow(handle: String): TripEntity?
 
     @Upsert
     suspend fun upsertTrip(trip: TripEntity)
@@ -133,8 +202,8 @@ interface DiscoveryDao {
     @Query("SELECT * FROM trip_item WHERE id = :id")
     suspend fun tripItem(id: Long): TripItemEntity?
 
-    @Query("SELECT COALESCE(MAX(position), -1) FROM trip_item WHERE section = :section")
-    suspend fun maxTripPosition(section: String): Int
+    @Query("SELECT COALESCE(MAX(position), -1) FROM trip_item WHERE handle = :handle AND section = :section")
+    suspend fun maxTripPosition(handle: String, section: String): Int
 
     @Query("UPDATE trip_item SET added = :added WHERE id = :id")
     suspend fun setTripItemAdded(id: Long, added: Boolean)
@@ -142,7 +211,7 @@ interface DiscoveryDao {
     @Query("DELETE FROM trip_item WHERE id = :id")
     suspend fun deleteTripItem(id: Long)
 
-    // ---- alerts and wanted posts (S-39)
+    // ---- alerts and wanted posts
     @Query("SELECT * FROM search_alert ORDER BY createdAt DESC")
     fun alerts(): Flow<List<SearchAlertEntity>>
 
@@ -153,7 +222,7 @@ interface DiscoveryDao {
     suspend fun deleteAlert(id: Long)
 }
 
-// ============================================================ M2 · Money & Commitment
+// ============================================================ money
 
 @Dao
 interface MoneyDao {
@@ -163,9 +232,6 @@ interface MoneyDao {
 
     @Query("SELECT * FROM booking WHERE ref = :ref")
     suspend fun booking(ref: String): BookingEntity?
-
-    @Query("SELECT * FROM booking WHERE status = 'DRAFT' AND renterHandle = :renter AND listingId = :listingId LIMIT 1")
-    suspend fun draftFor(renter: String, listingId: String): BookingEntity?
 
     @Upsert
     suspend fun upsertBooking(booking: BookingEntity)
@@ -183,18 +249,26 @@ interface MoneyDao {
     @Query("SELECT * FROM booking WHERE listingId = :listingId AND unit = :unit AND ref != :excluding AND status IN ('REQUESTED', 'CONFIRMED', 'ACTIVE', 'RETURNED')")
     suspend fun holdingOn(listingId: String, unit: Int, excluding: String): List<BookingEntity>
 
-    // ---- wallet (S-35)
-    @Query("SELECT * FROM wallet_txn ORDER BY createdAt DESC")
+    /** Returns still waiting on the owner's review that came back before [before]. */
+    @Query("SELECT * FROM booking WHERE status = 'RETURNED' AND returnedAt IS NOT NULL AND returnedAt < :before")
+    suspend fun returnsAwaitingReviewSince(before: Long): List<BookingEntity>
+
+    /** Requests the owner did not answer in time. */
+    @Query("SELECT * FROM booking WHERE status = 'REQUESTED' AND respondBy IS NOT NULL AND respondBy < :now")
+    suspend fun expiredRequests(now: Long): List<BookingEntity>
+
+    // ---- wallet
+    @Query("SELECT * FROM wallet_txn ORDER BY createdAt DESC, id DESC")
     fun walletTxns(): Flow<List<WalletTxnEntity>>
 
     @Insert
     suspend fun insertTxn(txn: WalletTxnEntity): Long
 
-    @Query("UPDATE profile SET walletAvailable = :amount WHERE id = 1")
-    suspend fun setWalletAvailable(amount: Int)
+    @Query("UPDATE profile SET walletAvailable = :amount WHERE handle = :handle")
+    suspend fun setWalletAvailable(handle: String, amount: Int)
 
-    // ---- notifications (S-38)
-    @Query("SELECT * FROM notification ORDER BY createdAt DESC")
+    // ---- notifications
+    @Query("SELECT * FROM notification ORDER BY createdAt DESC, id DESC")
     fun notifications(): Flow<List<NotificationEntity>>
 
     @Insert
@@ -203,8 +277,8 @@ interface MoneyDao {
     @Query("UPDATE notification SET unread = 0 WHERE id = :id")
     suspend fun markRead(id: Long)
 
-    @Query("UPDATE notification SET unread = 0")
-    suspend fun markAllRead()
+    @Query("UPDATE notification SET unread = 0 WHERE handle = :handle")
+    suspend fun markAllRead(handle: String)
 
     @Query("SELECT * FROM notification WHERE id = :id")
     suspend fun notification(id: Long): NotificationEntity?
@@ -212,7 +286,7 @@ interface MoneyDao {
     @Query("DELETE FROM notification WHERE id = :id")
     suspend fun deleteNotification(id: Long)
 
-    // ---- messages (S-33)
+    // ---- messages
     @Query("SELECT * FROM message ORDER BY createdAt, id")
     fun messages(): Flow<List<MessageEntity>>
 
@@ -225,7 +299,7 @@ interface MoneyDao {
     @Query("DELETE FROM message WHERE id = :id")
     suspend fun deleteMessage(id: Long)
 
-    // ---- claims (S-34, S-40)
+    // ---- claims
     @Query("SELECT * FROM claim ORDER BY createdAt DESC")
     fun claims(): Flow<List<ClaimEntity>>
 
@@ -238,9 +312,6 @@ interface MoneyDao {
     @Query("UPDATE claim SET status = :status WHERE ref = :ref")
     suspend fun setClaimStatus(ref: String, status: ClaimStatus)
 
-    @Query("SELECT COUNT(*) FROM claim")
-    suspend fun claimCount(): Int
-
     @Query("SELECT ref FROM claim")
     suspend fun claimRefs(): List<String>
 
@@ -248,7 +319,7 @@ interface MoneyDao {
     suspend fun claimFor(bookingRef: String, area: String): ClaimEntity?
 }
 
-// ============================================================ M3 · Evidence & Trust
+// ============================================================ evidence
 
 @Dao
 interface EvidenceDao {
@@ -286,32 +357,41 @@ interface EvidenceDao {
     @Query("DELETE FROM damage_mark WHERE id = :id")
     suspend fun deleteMark(id: Long)
 
-    @Query("SELECT * FROM verification_step ORDER BY position")
+    @Query("SELECT * FROM verification_step ORDER BY handle, position")
     fun verificationSteps(): Flow<List<VerificationStepEntity>>
 
     @Upsert
     suspend fun upsertVerificationStep(step: VerificationStepEntity)
 
-    @Query("SELECT * FROM verification_step ORDER BY position")
-    suspend fun verificationStepsNow(): List<VerificationStepEntity>
+    @Query("SELECT * FROM verification_step WHERE handle = :handle ORDER BY position")
+    suspend fun verificationStepsNow(handle: String): List<VerificationStepEntity>
 
-    @Query("SELECT * FROM badge ORDER BY position")
+    @Query("SELECT * FROM badge ORDER BY handle, position")
     fun badges(): Flow<List<BadgeEntity>>
 
-    @Query("UPDATE badge SET featured = :featured WHERE name = :name AND earned = 1")
-    suspend fun setBadgeFeatured(name: String, featured: Boolean)
+    @Query("UPDATE badge SET featured = :featured WHERE handle = :handle AND name = :name AND earned = 1")
+    suspend fun setBadgeFeatured(handle: String, name: String, featured: Boolean)
 
-    @Query("UPDATE profile SET address = :address WHERE id = 1")
-    suspend fun setAddress(address: String?)
+    @Query("UPDATE badge SET earned = 1 WHERE handle = :handle AND name = :name")
+    suspend fun earnBadge(handle: String, name: String)
+
+    @Query("UPDATE profile SET address = :address WHERE handle = :handle")
+    suspend fun setAddress(handle: String, address: String?)
 }
 
-// ============================================================ M4 · Exchange & Supply
+// ============================================================ exchange & supply
 
 @Dao
 interface ExchangeDao {
 
     @Query("SELECT * FROM swap_match ORDER BY position")
     fun matches(): Flow<List<SwapMatchEntity>>
+
+    @Query("SELECT * FROM swap_match WHERE handle = :handle")
+    suspend fun matchesOf(handle: String): List<SwapMatchEntity>
+
+    @Upsert
+    suspend fun upsertMatch(match: SwapMatchEntity)
 
     @Query("UPDATE swap_match SET hidden = :hidden WHERE id = :id")
     suspend fun setMatchHidden(id: String, hidden: Boolean)
@@ -334,9 +414,6 @@ interface ExchangeDao {
     @Query("DELETE FROM swap_proposal WHERE ref = :ref")
     suspend fun deleteProposal(ref: String)
 
-    @Query("SELECT COUNT(*) FROM swap_proposal")
-    suspend fun proposalCount(): Int
-
     @Query("SELECT ref FROM swap_proposal")
     suspend fun proposalRefs(): List<String>
 
@@ -349,7 +426,7 @@ interface ExchangeDao {
     @Query("UPDATE cycle_member SET accepted = :accepted WHERE cycleId = :cycleId AND handle = :handle")
     suspend fun setCycleAcceptance(cycleId: String, handle: String, accepted: Boolean?)
 
-    // ---- owner calendar (S-27)
+    // ---- owner calendar
     @Query("SELECT * FROM calendar_block ORDER BY day")
     fun blocks(): Flow<List<CalendarBlockEntity>>
 
@@ -365,14 +442,20 @@ interface ExchangeDao {
     @Query("SELECT * FROM calendar_block WHERE listingId = :listingId AND unit = :unit")
     suspend fun blocksFor(listingId: String, unit: Int): List<CalendarBlockEntity>
 
-    // ---- owner tasks (S-24)
+    @Query("SELECT COUNT(*) FROM calendar_block WHERE listingId = :listingId AND unit = :unit AND day = :day")
+    suspend fun blockCount(listingId: String, unit: Int, day: Long): Int
+
+    @Query("SELECT * FROM booking WHERE listingId = :listingId AND unit = :unit AND ref != :excluding AND status IN ('CONFIRMED', 'ACTIVE', 'RETURNED')")
+    suspend fun confirmedOn(listingId: String, unit: Int, excluding: String): List<BookingEntity>
+
+    // ---- owner tasks
     @Query("SELECT * FROM owner_task ORDER BY position")
     fun tasks(): Flow<List<OwnerTaskEntity>>
 
     @Query("UPDATE owner_task SET done = :done WHERE id = :id")
     suspend fun setTaskDone(id: String, done: Boolean)
 
-    // ---- gear closet (S-36)
+    // ---- gear closet
     @Query("SELECT * FROM closet_item ORDER BY position, id")
     fun closet(): Flow<List<ClosetItemEntity>>
 
@@ -388,31 +471,25 @@ interface ExchangeDao {
     @Query("DELETE FROM closet_item WHERE id = :id")
     suspend fun deleteClosetItem(id: Long)
 
-    @Query("SELECT COALESCE(MAX(position), 0) FROM closet_item")
-    suspend fun maxClosetPosition(): Int
+    @Query("SELECT COALESCE(MAX(position), 0) FROM closet_item WHERE ownerHandle = :handle")
+    suspend fun maxClosetPosition(handle: String): Int
 
     @Query("SELECT * FROM closet_item WHERE listingId = :listingId LIMIT 1")
     suspend fun closetForListing(listingId: String): ClosetItemEntity?
-
-    @Query("SELECT COUNT(*) FROM calendar_block WHERE listingId = :listingId AND unit = :unit AND day = :day")
-    suspend fun blockCount(listingId: String, unit: Int, day: Long): Int
-
-    @Query("SELECT * FROM booking WHERE listingId = :listingId AND unit = :unit AND ref != :excluding AND status IN ('CONFIRMED', 'ACTIVE', 'RETURNED')")
-    suspend fun confirmedOn(listingId: String, unit: Int, excluding: String): List<BookingEntity>
 }
 
-// ============================================================ shared
+// ============================================================ seeding
 
-/** Bulk inserts for seeding and resetting the demo. Nothing else writes through here. */
+/** Bulk inserts for the sample marketplace a new install starts with. */
 @Dao
 interface SeedDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun accounts(rows: List<AccountEntity>)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun people(rows: List<PersonEntity>)
-    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun profile(row: ProfileEntity)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun profiles(rows: List<ProfileEntity>)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun sports(rows: List<SportInterestEntity>)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun listings(rows: List<ListingEntity>)
-    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun rails(rows: List<RailEntryEntity>)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun reviews(rows: List<ReviewEntity>)
-    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun trip(row: TripEntity)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun trips(rows: List<TripEntity>)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun tripItems(rows: List<TripItemEntity>)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun bookings(rows: List<BookingEntity>)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun txns(rows: List<WalletTxnEntity>)

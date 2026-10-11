@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import com.gearloop.app.data.Demo
 import com.gearloop.app.data.FitLogic
 import com.gearloop.app.nav.Nav
+import com.gearloop.app.nav.Routes
 import com.gearloop.app.ui.vm.FitDiscoveryViewModel
 import com.gearloop.app.ui.vm.gearViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -56,6 +57,10 @@ import com.gearloop.app.ui.theme.Space
  * screen, so the track never filled and the last step read "3 of 4".
  */
 private const val ONBOARDING_STEPS = 3
+
+/** Where the steppers start for someone who hasn't entered anything yet. */
+private const val START_HEIGHT_CM = 170
+private const val START_WEIGHT_KG = 65
 
 /* ------------------------------------------------------------------ S-01 */
 
@@ -81,11 +86,13 @@ fun S01IntentSelector(nav: Nav) {
     var picked by rememberSaveable { mutableIntStateOf(-1) }
     val selected = if (picked >= 0) picked else profile?.intent ?: 0
 
+    val done = profile?.onboarded == true
     GearScreen(
         appBar = {
             AppBar(
-                onBack = { nav.back() },
-                actions = { GearLink("Skip", { nav.to("s04") }, color = GearText.tertiary) },
+                // The first screen after sign-up has nothing behind it to go back to.
+                onBack = if (done) ({ nav.back() }) else null,
+                actions = { GearLink("Skip", { vm.finishOnboarding { nav.reset(Routes.HOME) } }, color = GearText.tertiary) },
             )
         },
         footer = {
@@ -108,11 +115,7 @@ fun S01IntentSelector(nav: Nav) {
             if (i != intents.lastIndex) VGap(Space.listGap)
         }
         VGap(Space.l)
-        Text(
-            "You can change this later. It only sets what we show you first.",
-            style = GearType.bodyS,
-            color = GearText.tertiary,
-        )
+        Text("You can change this later.", style = GearType.bodyS, color = GearText.tertiary)
         VGap(Space.section)
     }
 }
@@ -173,10 +176,13 @@ fun S02FitProfile(nav: Nav) {
     val profile by vm.profile.collectAsStateWithLifecycle()
     // Read: the stored measurements, or the reference rider while there are none.
     // The steppers edit a copy; "Save and continue" is the Update.
-    var height by rememberSaveable { mutableIntStateOf(profile?.heightCm ?: Demo.HEIGHT_CM) }
-    var weight by rememberSaveable { mutableIntStateOf(profile?.weightKg ?: Demo.WEIGHT_KG) }
+    var height by rememberSaveable { mutableIntStateOf(profile?.heightCm ?: START_HEIGHT_CM) }
+    var weight by rememberSaveable { mutableIntStateOf(profile?.weightKg ?: START_WEIGHT_KG) }
     var metric by rememberSaveable { mutableStateOf(profile?.metric ?: true) }
     val saved = profile?.hasMeasurements == true
+    // Reached from Profile once getting started is done, this is an edit, not
+    // step 2 of a sequence the member finished long ago.
+    val editing = profile?.onboarded == true
 
     GearScreen(
         appBar = { AppBar(onBack = { nav.back() }) },
@@ -190,8 +196,10 @@ fun S02FitProfile(nav: Nav) {
             }
         },
     ) {
-        ProgressStepper(step = 2, total = ONBOARDING_STEPS)
-        VGap(Space.l)
+        if (!editing) {
+            ProgressStepper(step = 2, total = ONBOARDING_STEPS)
+            VGap(Space.l)
+        }
         Text("Let's get your sizes right", style = GearType.displayL, color = GearText.primary)
         VGap(Space.m)
         Banner(
@@ -226,12 +234,12 @@ fun S02FitProfile(nav: Nav) {
             Chip("Metric", selected = metric, onClick = { metric = true })
             Chip("Imperial", selected = !metric, onClick = { metric = false })
             Spacer(Modifier.weight(1f))
-            Text("Shoe EU ${profile?.shoeEu ?: Demo.SHOE_EU}", style = GearType.dataM, color = GearText.tertiary)
+            Text("Shoe EU ${profile?.shoeEu ?: 42}", style = GearType.dataM, color = GearText.tertiary)
         }
         if (!saved) {
             VGap(Space.s)
             Text(
-                "Not saved yet. Until you save, every listing says “add your height”.",
+                "Not saved yet.",
                 style = GearType.bodyS,
                 color = GearText.secondary,
             )
@@ -265,16 +273,13 @@ fun S02FitProfile(nav: Nav) {
             }
         }
         VGap(Space.sm)
-        Text(
-            "These come straight from your height and weight — change either and they " +
-                "update. Every listing you see gets a fit verdict from them.",
-            style = GearType.bodyS,
-            color = GearText.tertiary,
-        )
+        Text("Every listing's fit verdict comes from these.", style = GearType.bodyS, color = GearText.tertiary)
 
         VGap(Space.m)
         Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-            GearButton("Skip for now", { nav.to("s03") }, type = ButtonType.GHOST, size = ButtonSize.M)
+            // Back is the way out of an edit; skipping only means something
+            // while getting started.
+            if (!editing) GearButton("Skip for now", { nav.to("s03") }, type = ButtonType.GHOST, size = ButtonSize.M)
             // Delete: take the measurements off the profile. Every stamp in the
             // app falls back to "add your height" rather than guessing (FR-03).
             if (saved) {
@@ -327,29 +332,35 @@ private fun MeasureField(
 fun S03SportInterests(nav: Nav) {
     val vm: FitDiscoveryViewModel = gearViewModel()
     val chosen by vm.sports.collectAsStateWithLifecycle()
+    val profile by vm.profile.collectAsStateWithLifecycle()
+    val editing = profile?.onboarded == true
 
     GearScreen(
-        appBar = { AppBar(onBack = { nav.back() }) },
+        appBar = {
+            AppBar(
+                onBack = { nav.back() },
+                // The same way out as step 1: nobody has to pick a sport to get in.
+                actions = if (editing) null else ({ GearLink("Skip", { vm.finishOnboarding { nav.reset(Routes.HOME) } }, color = GearText.tertiary) }),
+            )
+        },
         footer = {
             StickyFooter {
                 GearButton(
-                    label = "Continue (${chosen.size} selected)",
-                    onClick = { nav.to("s04") },
+                    label = if (editing) "Done (${chosen.size} selected)" else "Start exploring (${chosen.size} selected)",
+                    // An edit from Profile goes back to Profile, past the sizes
+                    // screen it started on. It used to restart the app on Home.
+                    onClick = { vm.finishOnboarding { if (editing) nav.backPast(Routes.FIT) else nav.reset(Routes.HOME) } },
                     modifier = Modifier.fillMaxWidth(),
                     enabled = chosen.isNotEmpty(),
                 )
             }
         },
     ) {
-        ProgressStepper(step = 3, total = ONBOARDING_STEPS)
-        VGap(Space.l)
+        if (!editing) {
+            ProgressStepper(step = 3, total = ONBOARDING_STEPS)
+            VGap(Space.l)
+        }
         Text("Pick your sports", style = GearType.displayL, color = GearText.primary)
-        VGap(Space.s)
-        Text(
-            "We'll use these to work out what fits you and what's worth swapping.",
-            style = GearType.bodyM,
-            color = GearText.secondary,
-        )
         VGap(Space.l)
 
         Demo.sports.chunked(2).forEach { pair ->

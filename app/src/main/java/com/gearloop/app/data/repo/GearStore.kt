@@ -1,9 +1,9 @@
 package com.gearloop.app.data.repo
 
+import com.gearloop.app.data.AppClock
 import com.gearloop.app.data.Availability
 import com.gearloop.app.data.BookingStatus
 import com.gearloop.app.data.ChatMessage
-import com.gearloop.app.data.DemoClock
 import com.gearloop.app.data.Extra
 import com.gearloop.app.data.FitLogic
 import com.gearloop.app.data.GearItem
@@ -37,16 +37,18 @@ import java.time.LocalDate
  * The read side of the data layer.
  *
  * Every table is observed once, here, as a hot [StateFlow] owned by the
- * application rather than by a screen. The dataset is small — a few dozen rows
- * — so holding it in memory costs nothing, and it buys two things: a screen has
- * its data on the first frame instead of flashing empty, and two screens
- * looking at the same booking are looking at the same object.
+ * application rather than by a screen. The dataset is small, so holding it in
+ * memory costs nothing, and it buys two things: a screen has its data on the
+ * first frame instead of flashing empty, and two screens looking at the same
+ * booking are looking at the same object.
  *
- * Rows become domain objects in one place, so a derived fact — a listing's live
- * fit verdict, whether it is free today, a person's rating read off their
- * histogram — is derived once and agrees everywhere it is shown.
+ * Rows become domain objects in one place, narrowed to whoever is signed in
+ * ([me]) — their profile, their saved listings, their notifications — so a
+ * derived fact (a listing's live fit verdict, whether it is free today, a
+ * person's rating read off their histogram) is derived once and agrees
+ * everywhere it is shown.
  */
-class GearStore(private val db: GearDatabase, private val scope: CoroutineScope) {
+class GearStore(private val db: GearDatabase, private val session: SessionStore, private val scope: CoroutineScope) {
 
     private fun <T> Flow<T>.hot(initial: T): StateFlow<T> = stateIn(scope, SharingStarted.Eagerly, initial)
 
@@ -55,41 +57,64 @@ class GearStore(private val db: GearDatabase, private val scope: CoroutineScope)
     private val evidence = db.evidence()
     private val exchange = db.exchange()
 
+    /** The signed-in member, or "" when signed out. */
+    val me: StateFlow<String> = session.me
+
     // ------------------------------------------------------------ raw tables
 
     val peopleRows = discovery.people().hot(emptyList())
-    val profileRow = discovery.profile().hot(null)
-    val sportRows = discovery.sports().hot(emptyList())
+    val profileRows = discovery.profiles().hot(emptyList())
+    val sportRowsAll = discovery.sports().hot(emptyList())
     val listingRows = discovery.listings().hot(emptyList())
-    val railRows = discovery.rails().hot(emptyList())
+    val savedRows = discovery.saved().hot(emptyList())
     val reviewRows = discovery.reviews().hot(emptyList())
-    val tripRow = discovery.trip().hot(null)
-    val tripItemRows = discovery.tripItems().hot(emptyList())
-    val alertRows = discovery.alerts().hot(emptyList())
+    val tripRows = discovery.trips().hot(emptyList())
+    val tripItemRowsAll = discovery.tripItems().hot(emptyList())
+    val alertRowsAll = discovery.alerts().hot(emptyList())
 
     val bookingRows = money.bookings().hot(emptyList())
-    val txnRows = money.walletTxns().hot(emptyList())
-    val notificationRows = money.notifications().hot(emptyList())
+    val txnRowsAll = money.walletTxns().hot(emptyList())
+    val notificationRowsAll = money.notifications().hot(emptyList())
     val messageRows = money.messages().hot(emptyList())
     val claimRows = money.claims().hot(emptyList())
 
     val captureRows = evidence.captures().hot(emptyList())
     val markRows = evidence.marks().hot(emptyList())
-    val verificationRows = evidence.verificationSteps().hot(emptyList())
-    val badgeRows = evidence.badges().hot(emptyList())
+    val verificationRowsAll = evidence.verificationSteps().hot(emptyList())
+    val badgeRowsAll = evidence.badges().hot(emptyList())
 
-    val matchRows = exchange.matches().hot(emptyList())
+    val matchRowsAll = exchange.matches().hot(emptyList())
     val proposalRows = exchange.proposals().hot(emptyList())
     val cycleRows = exchange.cycleMembers().hot(emptyList())
     val blockRows = exchange.blocks().hot(emptyList())
-    val taskRows = exchange.tasks().hot(emptyList())
-    val closetRows = exchange.closet().hot(emptyList())
+    val taskRowsAll = exchange.tasks().hot(emptyList())
+    val closetRowsAll = exchange.closet().hot(emptyList())
+
+    // ------------------------------------------------------------ mine only
+
+    val profileRow: StateFlow<ProfileEntity?> = combine(me, profileRows) { h, rows -> rows.firstOrNull { it.handle == h } }.hot(null)
+    val sportRows = combine(me, sportRowsAll) { h, rows -> rows.filter { it.handle == h } }.hot(emptyList())
+    val tripRow = combine(me, tripRows) { h, rows -> rows.firstOrNull { it.handle == h } }.hot(null)
+    val tripItemRows = combine(me, tripItemRowsAll) { h, rows -> rows.filter { it.handle == h } }.hot(emptyList())
+    val alertRows = combine(me, alertRowsAll) { h, rows -> rows.filter { it.handle == h } }.hot(emptyList())
+    val txnRows = combine(me, txnRowsAll) { h, rows -> rows.filter { it.handle == h } }.hot(emptyList())
+    val notificationRows = combine(me, notificationRowsAll) { h, rows -> rows.filter { it.handle == h } }.hot(emptyList())
+    val verificationRows = combine(me, verificationRowsAll) { h, rows -> rows.filter { it.handle == h }.sortedBy { it.position } }.hot(emptyList())
+    val badgeRows = combine(me, badgeRowsAll) { h, rows -> rows.filter { it.handle == h }.sortedBy { it.position } }.hot(emptyList())
+    val matchRows = combine(me, matchRowsAll) { h, rows -> rows.filter { it.handle == h } }.hot(emptyList())
+    val taskRows = combine(me, taskRowsAll) { h, rows -> rows.filter { it.handle == h } }.hot(emptyList())
+    val closetRows = combine(me, closetRowsAll) { h, rows -> rows.filter { it.ownerHandle == h } }.hot(emptyList())
+
+    private val savedIds: StateFlow<Set<String>> =
+        combine(me, savedRows) { h, rows -> rows.filter { it.handle == h }.map { it.listingId }.toSet() }.hot(emptySet())
 
     // ------------------------------------------------------------ people
 
-    val people: StateFlow<Map<String, Person>> = peopleRows
-        .map { rows -> rows.associate { it.handle to it.toPerson() } }
-        .hot(emptyMap())
+    /** Everyone, with their listing count read off the listings they really have up. */
+    val people: StateFlow<Map<String, Person>> = combine(peopleRows, listingRows) { rows, listings ->
+        val live = listings.filter { it.status == ListingStatus.PUBLISHED }.groupingBy { it.ownerHandle }.eachCount()
+        rows.associate { it.handle to it.toPerson(live[it.handle] ?: 0) }
+    }.hot(emptyMap())
 
     fun person(handle: String): Person = people.value[handle] ?: unknownPerson(handle)
 
@@ -105,31 +130,34 @@ class GearStore(private val db: GearDatabase, private val scope: CoroutineScope)
                 couponUsed = it.couponUsed,
                 walletAvailable = it.walletAvailable,
                 address = it.address,
+                onboarded = it.onboarded,
+                card = if (it.cardLast4 != null && it.cardBrand != null) SavedCard(it.cardBrand, it.cardLast4, it.cardExpiry.orEmpty()) else null,
             )
         }
     }.hot(null)
 
     // ------------------------------------------------------------ listings
 
-    /**
-     * Every listing as the screens draw it: owner resolved, photos resolved, the
-     * fit verdict worked out against the current profile, and availability
-     * worked out from the bookings that actually hold today.
-     */
-    val allItems: StateFlow<List<GearItem>> =
-        combine(listingRows, people, profileRow, bookingRows, blockRows) { listings, map, prof, bookings, blocks ->
-            val today = DemoClock.today
-            listings.map { it.toItem(map, prof, bookings, blocks, today) }
+    private val itemsWithoutDates: StateFlow<List<Triple<ListingEntity, Person, Boolean>>> =
+        combine(listingRows, people, savedIds) { listings, map, saved ->
+            listings.map { Triple(it, map[it.ownerHandle] ?: unknownPerson(it.ownerHandle), it.id in saved) }
         }.hot(emptyList())
 
     /**
-     * What a renter can find: published, and not their own. The second half was
-     * only in this comment, so gear listed from the closet came back in the
-     * renter's own search with a Book button on it (D-26).
+     * Every listing as the screens draw it: owner resolved, photos resolved, the
+     * fit verdict worked out against the signed-in member's profile, and
+     * availability worked out from the bookings that actually hold today.
      */
-    val published: StateFlow<List<GearItem>> = allItems
-        .map { list -> list.filter { it.status == ListingStatus.PUBLISHED && it.owner.handle != Seed.ME } }
-        .hot(emptyList())
+    val allItems: StateFlow<List<GearItem>> =
+        combine(itemsWithoutDates, profileRow, bookingRows, blockRows) { rows, prof, bookings, blocks ->
+            val today = AppClock.today
+            rows.map { (row, owner, saved) -> row.toItem(owner, saved, prof, bookings, blocks, today) }
+        }.hot(emptyList())
+
+    /** What a member can find: published, and not their own (D-26). */
+    val published: StateFlow<List<GearItem>> = combine(allItems, me) { list, h ->
+        list.filter { it.status == ListingStatus.PUBLISHED && it.owner.handle != h }
+    }.hot(emptyList())
 
     fun item(id: String): GearItem? = allItems.value.firstOrNull { it.id == id }
 
@@ -173,14 +201,18 @@ class GearStore(private val db: GearDatabase, private val scope: CoroutineScope)
         rows.map { it.toClaim(map) }
     }.hot(emptyList())
 
-    val messages: StateFlow<List<Message>> = messageRows.map { rows ->
-        rows.map { Message(it.id, it.threadId, ChatMessage(it.body, com.gearloop.app.data.chatTime(DemoClock.fromMillis(it.createdAt)), it.fromMe, it.kind), DemoClock.fromMillis(it.createdAt)) }
+    /** Every message, with "from me" worked out for whoever is signed in. */
+    val messages: StateFlow<List<Message>> = combine(messageRows, me) { rows, h ->
+        rows.map {
+            val at = AppClock.fromMillis(it.createdAt)
+            Message(it.id, it.threadId, it.fromHandle, ChatMessage(it.body, com.gearloop.app.data.chatTime(at), it.fromHandle == h, it.kind), at)
+        }
     }.hot(emptyList())
 
     val notifications: StateFlow<List<Notification>> = notificationRows.map { rows ->
-        val now = DemoClock.now()
+        val now = AppClock.now()
         rows.map {
-            val at = DemoClock.fromMillis(it.createdAt)
+            val at = AppClock.fromMillis(it.createdAt)
             Notification(it.id, NotificationItem(it.kind, it.title, it.body, com.gearloop.app.data.relativeTime(at, now), it.unread), it.route, it.ref, at)
         }
     }.hot(emptyList())
@@ -194,7 +226,7 @@ class GearStore(private val db: GearDatabase, private val scope: CoroutineScope)
                 subject = map[it.subjectHandle] ?: unknownPerson(it.subjectHandle),
                 author = author,
                 authorHandle = it.authorHandle,
-                entry = ReviewEntry(author, it.date, it.stars, it.body, Photos.resList(it.photos), it.ownerResponse),
+                entry = ReviewEntry(author, it.date, it.stars, it.body, it.photos, it.ownerResponse),
                 bookingRef = it.bookingRef,
             )
         }
@@ -202,8 +234,9 @@ class GearStore(private val db: GearDatabase, private val scope: CoroutineScope)
 
     /** Wait until the database has been read into memory, so the first frame is not empty. */
     suspend fun awaitLoaded() {
-        profile.first { it != null }
         allItems.first { it.isNotEmpty() }
+        people.first { it.isNotEmpty() }
+        if (session.signedIn) profile.first { it != null }
     }
 
     // ============================================================ mapping
@@ -211,9 +244,9 @@ class GearStore(private val db: GearDatabase, private val scope: CoroutineScope)
     private fun unknownPerson(handle: String) =
         Person(handle.removePrefix("@"), handle, "", TrustTier.BRONZE, 0.0, 0, "")
 
-    private fun PersonEntity.toPerson(): Person {
+    private fun PersonEntity.toPerson(liveListings: Int): Person {
         // Where a histogram exists the rating and count are read off it, so the
-        // bars, the average and the "N reviews" label cannot disagree (S-42).
+        // bars, the average and the "N reviews" label cannot disagree.
         val dist = starCounts.takeIf { it.size == 5 }?.let(::StarDistribution)
         return Person(
             name = name,
@@ -223,7 +256,7 @@ class GearStore(private val db: GearDatabase, private val scope: CoroutineScope)
             rating = dist?.average ?: rating,
             reviews = dist?.total ?: reviews,
             respondsIn = respondsIn,
-            listings = listings,
+            listings = liveListings,
             memberSince = memberSince,
         )
     }
@@ -237,17 +270,17 @@ class GearStore(private val db: GearDatabase, private val scope: CoroutineScope)
             ?: Triple(0, 100, 0)
 
     private fun ListingEntity.toItem(
-        people: Map<String, Person>,
+        owner: Person,
+        saved: Boolean,
         profile: ProfileEntity?,
         bookings: List<BookingEntity>,
         blocks: List<CalendarBlockEntity>,
         today: LocalDate,
     ): GearItem {
-        val owner = people[ownerHandle] ?: unknownPerson(ownerHandle)
-        // A draft shows the photos it really has, so S-25 can count them; anything
-        // a renter can see always has at least the sport's picture.
-        val photoRes = when {
-            photos.isNotEmpty() -> Photos.resList(photos)
+        // A draft shows the photos it really has, so the listing flow can count
+        // them; anything a renter can see always has at least the sport's picture.
+        val photoKeys = when {
+            photos.isNotEmpty() -> photos
             status == ListingStatus.DRAFT -> emptyList()
             else -> listOf(Photos.forSport(sport))
         }
@@ -265,7 +298,7 @@ class GearStore(private val db: GearDatabase, private val scope: CoroutineScope)
         val nextFree = if (available) null else {
             val spans = held.map { Availability.Span(LocalDate.ofEpochDay(it.startDay), LocalDate.ofEpochDay(it.endDay)) }
             Availability.nextFreeDay(today, spans, blocked.map { LocalDate.ofEpochDay(it.day) }.toSet())
-                ?.let { "NEXT FREE ${dayMonth(it).uppercase(java.util.Locale.UK)}" }
+                ?.let { "NEXT FREE ${dayMonth(it).uppercase(java.util.Locale.ENGLISH)}" }
         }
 
         val base = GearItem(
@@ -277,7 +310,7 @@ class GearStore(private val db: GearDatabase, private val scope: CoroutineScope)
             grade = grade,
             pricePerDay = pricePerDay,
             distanceKm = distanceKm,
-            photos = photoRes,
+            photos = photoKeys,
             owner = owner,
             fit = fit,
             sport = sport,
@@ -297,12 +330,13 @@ class GearStore(private val db: GearDatabase, private val scope: CoroutineScope)
             },
             included = included,
             excluded = excluded,
-            conditionPhotos = if (conditionPhotos.isEmpty()) photoRes.take(3) else Photos.resList(conditionPhotos),
+            conditionPhotos = conditionPhotos.ifEmpty { photoKeys.take(3) },
             conditionNote = conditionNote,
             conditionDate = conditionDate,
             extras = extras.map { e -> e.split("|").let { Extra(it[0], it[1].toInt()) } },
             discounts = discounts,
             waiveDepositWithPlus = waiveDepositWithPlus,
+            description = description,
         )
         return base.copy(fit = FitLogic.verdict(base, profile?.heightCm, profile?.weightKg))
     }
@@ -310,7 +344,7 @@ class GearStore(private val db: GearDatabase, private val scope: CoroutineScope)
     private fun BookingEntity.toBooking(item: GearItem, people: Map<String, Person>): Booking {
         val start = LocalDate.ofEpochDay(startDay)
         val end = LocalDate.ofEpochDay(endDay)
-        fun t(ms: Long?) = ms?.let(DemoClock::fromMillis)
+        fun t(ms: Long?) = ms?.let(AppClock::fromMillis)
         return Booking(
             ref = ref,
             item = item,
@@ -339,10 +373,12 @@ class GearStore(private val db: GearDatabase, private val scope: CoroutineScope)
             ownerScannedAt = t(handshakeOwnerAt),
             renterSignedAt = t(renterSignedAt),
             ownerSignedAt = t(ownerSignedAt),
+            renterSignature = renterSignature,
+            ownerSignature = ownerSignature,
             returnedAt = t(returnedAt),
             rating = rating,
             calendarAdded = calendarAdded,
-            createdAt = DemoClock.fromMillis(createdAt),
+            createdAt = AppClock.fromMillis(createdAt),
         )
     }
 
@@ -358,13 +394,14 @@ class GearStore(private val db: GearDatabase, private val scope: CoroutineScope)
         area = area,
         note = note,
         status = status,
-        createdAt = DemoClock.fromMillis(createdAt),
-        respondBy = DemoClock.fromMillis(respondBy),
+        createdAt = AppClock.fromMillis(createdAt),
+        respondBy = AppClock.fromMillis(respondBy),
         renterStatement = renterStatement,
         renterEvidence = renterEvidence,
+        renterPhotos = renterPhotos,
         award = award,
         rationale = rationale,
-        decidedAt = decidedAt?.let(DemoClock::fromMillis),
+        decidedAt = decidedAt?.let(AppClock::fromMillis),
         decidedBy = decidedBy,
     )
 

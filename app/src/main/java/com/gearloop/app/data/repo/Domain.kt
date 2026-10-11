@@ -1,6 +1,5 @@
 package com.gearloop.app.data.repo
 
-import androidx.annotation.DrawableRes
 import com.gearloop.app.data.Availability
 import com.gearloop.app.data.BookingStatus
 import com.gearloop.app.data.ChatMessage
@@ -37,8 +36,15 @@ data class Profile(
     val couponUsed: Boolean,
     val walletAvailable: Int,
     val address: String?,
+    val onboarded: Boolean,
+    val card: SavedCard?,
 ) {
     val hasMeasurements: Boolean get() = heightCm != null && weightKg != null
+}
+
+/** The card a member saved: brand and last four digits, never the number. */
+data class SavedCard(val brand: String, val last4: String, val expiry: String) {
+    val label: String get() = "$brand •••• $last4"
 }
 
 data class Booking(
@@ -69,6 +75,8 @@ data class Booking(
     val ownerScannedAt: LocalDateTime?,
     val renterSignedAt: LocalDateTime?,
     val ownerSignedAt: LocalDateTime?,
+    val renterSignature: String?,
+    val ownerSignature: String?,
     val returnedAt: LocalDateTime?,
     val rating: Int?,
     val calendarAdded: Boolean,
@@ -83,9 +91,8 @@ data class Booking(
     val quote: Quote get() = Pricing.quote(item, days, protection, coupon > 0, includeExtras)
 
     /**
-     * When to say it came back. A scenario played from the cover moves the
-     * booking on without moving the clock, so its return is stamped days before
-     * its own pickup; then the time it was due back is the one that reads true.
+     * When to say it came back. A rental fast-forwarded in a test is returned
+     * before its own pickup time; then the time it was due back reads true.
      */
     val returnedShownAt: LocalDateTime? get() = returnedAt?.let { if (it.isBefore(pickupAt)) returnAt else it }
 
@@ -118,8 +125,15 @@ data class Notification(
 data class Message(
     val id: Long,
     val threadId: String,
+    val fromHandle: String,
     val chat: ChatMessage,
     val createdAt: LocalDateTime,
+)
+
+/** One conversation in the inbox: who it is with, and the last thing said. */
+data class Conversation(
+    val other: Person,
+    val last: Message?,
 )
 
 data class WalletLine(val label: String, val date: String, val amount: Int)
@@ -143,6 +157,7 @@ data class Claim(
     val respondBy: LocalDateTime,
     val renterStatement: String?,
     val renterEvidence: String?,
+    val renterPhotos: List<String>,
     val award: Int?,
     val rationale: String?,
     val decidedAt: LocalDateTime?,
@@ -156,12 +171,17 @@ data class Claim(
 data class CaptureFrame(
     val id: Long,
     val angle: String,
-    @param:DrawableRes val photo: Int,
+    val photo: String,
     val ok: Boolean,
     val capturedAt: LocalDateTime,
-    val latitude: Double,
-    val longitude: Double,
-)
+    val latitude: Double?,
+    val longitude: Double?,
+) {
+    /** `9.7134°N, 80.0246°E`, or a plain statement that it isn't known. */
+    val place: String
+        get() = if (latitude == null || longitude == null) "LOCATION OFF"
+        else com.gearloop.app.data.coordinates(latitude, longitude)
+}
 
 data class Mark(
     val id: Long,
@@ -172,7 +192,7 @@ data class Mark(
     val note: String,
     val x: Float,
     val y: Float,
-    @param:DrawableRes val photo: Int?,
+    val photo: String?,
     val createdAt: LocalDateTime,
     val resolved: Boolean,
 ) {
@@ -180,6 +200,18 @@ data class Mark(
 }
 
 /** One angle on S-18: what it looked like at pickup, at return, and whether it changed. */
+/**
+ * What the claims desk weighs: the claimed angle at pickup and on return, where
+ * and when each was taken, and the checks that say whether to trust them.
+ */
+data class ClaimEvidence(
+    val pickupPhoto: String,
+    val returnPhoto: String,
+    val pickupStamp: String,
+    val returnStamp: String,
+    val checks: List<Pair<String, Boolean>>,
+)
+
 data class AnglePair(
     val angle: String,
     val pickup: CaptureFrame?,
@@ -192,6 +224,8 @@ data class Badge(val name: String, val earned: Boolean, val featured: Boolean)
 data class Proposal(
     val ref: String,
     val matchId: String?,
+    /** Who made the offer: [give] is theirs. */
+    val proposer: Person,
     val give: GearItem,
     val get: GearItem,
     val giveValue: Int,
@@ -275,7 +309,7 @@ data class ClosetItem(
     val id: Long,
     val title: String,
     val shortTitle: String,
-    @param:DrawableRes val photo: Int,
+    val photo: String,
     val sport: String,
     val sizeLabel: String,
     val grade: Grade,

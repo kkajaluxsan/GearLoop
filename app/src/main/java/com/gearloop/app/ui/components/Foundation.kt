@@ -51,6 +51,12 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.gearloop.app.data.Person
 import com.gearloop.app.data.Thumbs
+import com.gearloop.app.data.Photos
+import com.gearloop.app.data.PhotoStore
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import com.gearloop.app.ui.theme.GearColor
 import com.gearloop.app.ui.theme.GearShape
 import com.gearloop.app.ui.theme.GearSurface
@@ -112,22 +118,9 @@ fun GearImage(
     dimmed: Boolean = false,
     contentScale: ContentScale = ContentScale.Crop,
 ) {
-    // In wireframe mode the picture is replaced by the slot it occupies. Colours
-    // are read here rather than inside the draw lambda, because a DrawScope is
-    // not a composable scope.
+    // In wireframe mode the picture is replaced by the slot it occupies.
     if (LocalWireframe.current) {
-        val edge = GearSurface.borderStrong
-        Box(
-            modifier
-                .clip(shape)
-                .background(GearSurface.sunken)
-                .border(Border.hair, edge, shape),
-        ) {
-            Canvas(Modifier.fillMaxSize()) {
-                drawLine(edge, Offset(0f, 0f), Offset(size.width, size.height), Border.hair.toPx())
-                drawLine(edge, Offset(size.width, 0f), Offset(0f, size.height), Border.hair.toPx())
-            }
-        }
+        WireSlot(modifier, shape)
         return
     }
 
@@ -145,6 +138,73 @@ fun GearImage(
         )
         if (scrim > 0f) {
             Box(Modifier.fillMaxSize().background(GearColor.Pine900.copy(alpha = scrim)))
+        }
+    }
+}
+
+/**
+ * A photograph by its key: a bundled picture, or one taken or chosen on this
+ * phone. Bundled keys go through the resource version above, with its
+ * thumbnail choice; a picture from the phone is decoded off the main thread
+ * at about the size of its slot, and cached.
+ */
+@Composable
+fun GearImage(
+    photo: String,
+    contentDescription: String?,
+    modifier: Modifier = Modifier,
+    shape: Shape = RectangleShape,
+    scrim: Float = 0f,
+    dimmed: Boolean = false,
+    contentScale: ContentScale = ContentScale.Crop,
+) {
+    if (!Photos.isFile(photo)) {
+        GearImage(Photos.res(photo), contentDescription, modifier, shape, scrim, dimmed, contentScale)
+        return
+    }
+    if (LocalWireframe.current) {
+        WireSlot(modifier, shape)
+        return
+    }
+    val context = LocalContext.current
+    BoxWithConstraints(modifier.clip(shape).background(GearColor.Chalk200)) {
+        val target = when {
+            constraints.hasBoundedWidth && constraints.hasBoundedHeight -> maxOf(constraints.maxWidth, constraints.maxHeight)
+            constraints.hasBoundedWidth -> constraints.maxWidth
+            else -> PhotoStore.MAX_EDGE
+        }
+        val bitmap by produceState<ImageBitmap?>(null, photo, target) { value = PhotoStore.load(context, photo, target) }
+        bitmap?.let {
+            Image(
+                bitmap = it,
+                contentDescription = contentDescription,
+                contentScale = contentScale,
+                modifier = Modifier.fillMaxSize().alpha(if (dimmed) 0.45f else 1f),
+            )
+        }
+        if (scrim > 0f) {
+            Box(Modifier.fillMaxSize().background(GearColor.Pine900.copy(alpha = scrim)))
+        }
+    }
+}
+
+/**
+ * The slot a picture occupies, drawn as a crossed box in wireframe mode. Colours
+ * are read here rather than inside the draw lambda, because a DrawScope is not
+ * a composable scope.
+ */
+@Composable
+private fun WireSlot(modifier: Modifier, shape: Shape) {
+    val edge = GearSurface.borderStrong
+    Box(
+        modifier
+            .clip(shape)
+            .background(GearSurface.sunken)
+            .border(Border.hair, edge, shape),
+    ) {
+        Canvas(Modifier.fillMaxSize()) {
+            drawLine(edge, Offset(0f, 0f), Offset(size.width, size.height), Border.hair.toPx())
+            drawLine(edge, Offset(size.width, 0f), Offset(0f, size.height), Border.hair.toPx())
         }
     }
 }

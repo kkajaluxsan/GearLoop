@@ -60,6 +60,18 @@ fun S06FilterSheet(nav: Nav) {
     // which is what makes the result count underneath it true rather than drawn.
     val filters = LocalSearchFilters.current
     val matches = filters.apply(all).size
+    // The bars behind the price slider are the listings themselves, counted
+    // into sixteen bands of the slider's range.
+    val histogram = remember(all) {
+        val bands = IntArray(16)
+        all.forEach { item ->
+            val f = SearchFilters.fractionOf(item.pricePerDay)
+            bands[(f * 15.999f).toInt().coerceIn(0, 15)]++
+        }
+        val most = bands.maxOrNull()?.takeIf { it > 0 } ?: 1
+        bands.map { (it.toFloat() / most).coerceAtLeast(0.04f) }
+    }
+    val boards = filters.sports.isEmpty() || filters.sports.any { it in setOf("Surfing", "SUP") }
 
     Column(Modifier.fillMaxSize().background(GearSurface.darkest.copy(alpha = 0.45f))) {
         // Tapping the dimmed area behind the sheet dismisses it.
@@ -99,6 +111,11 @@ fun S06FilterSheet(nav: Nav) {
                     .padding(horizontal = Space.screen),
             ) {
                 VGap(Space.m)
+                Eyebrow("Sport")
+                VGap(Space.s)
+                ChipWrap(options = Demo.sports.map { it.first }, selected = filters.sports)
+
+                SectionGap()
                 Eyebrow("Fit")
                 VGap(Space.s)
                 ToggleRow(
@@ -122,7 +139,7 @@ fun S06FilterSheet(nav: Nav) {
                     )
                     Spacer(Modifier.weight(1f))
                     Text(
-                        lkr(filters.priceAt(filters.priceUpper)),
+                        if (filters.priceUpper >= 1f) "${lkr(filters.priceAt(1f))}+" else lkr(filters.priceAt(filters.priceUpper)),
                         style = GearType.dataM,
                         color = GearText.primary,
                     )
@@ -132,7 +149,7 @@ fun S06FilterSheet(nav: Nav) {
                     lower = filters.priceLower,
                     upper = filters.priceUpper,
                     onRangeChange = { l, u -> filters.priceLower = l; filters.priceUpper = u },
-                    histogram = Demo.priceHistogram,
+                    histogram = histogram,
                     lowerLabel = "Minimum price",
                     upperLabel = "Maximum price",
                     valueText = { lkr(filters.priceAt(it)) },
@@ -147,13 +164,15 @@ fun S06FilterSheet(nav: Nav) {
                     onSelect = { filters.distanceIndex = it },
                 )
 
-                SectionGap()
-                Eyebrow("Board length")
-                VGap(Space.s)
-                ChipWrap(
-                    options = listOf("5'8\"", "6'0\"", "6'6\"", "7'0\"", "8'0\"+"),
-                    selected = filters.lengths,
-                )
+                if (boards) {
+                    SectionGap()
+                    Eyebrow("Board length")
+                    VGap(Space.s)
+                    ChipWrap(
+                        options = listOf("5'8\"", "6'0\"", "6'6\"", "7'0\"", "8'0\"+", "9'0\"", "10'6\"", "11'0\""),
+                        selected = filters.lengths,
+                    )
+                }
 
                 SectionGap()
                 Eyebrow("Condition")
@@ -181,7 +200,9 @@ fun S06FilterSheet(nav: Nav) {
                         1 -> "Show 1 result"
                         else -> "Show $matches results"
                     },
-                    onClick = { nav.back() },
+                    // To the results, which is what the button promises. Opened
+                    // from home it used to drop the member back on the rails.
+                    onClick = { nav.closeTo("s05") },
                     modifier = Modifier.fillMaxWidth(),
                     enabled = matches > 0,
                 )

@@ -29,12 +29,11 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gearloop.app.data.Demo
-import com.gearloop.app.data.DemoClock
+import com.gearloop.app.data.AppClock
 import com.gearloop.app.data.NeedsAttention
 import com.gearloop.app.data.clockTime
 import com.gearloop.app.data.lkr
 import com.gearloop.app.data.repo.Attention
-import com.gearloop.app.data.repo.Seed
 import com.gearloop.app.nav.Nav
 import com.gearloop.app.screens.MainTab
 import com.gearloop.app.screens.MainTabBar
@@ -67,13 +66,17 @@ fun S24OwnerDashboard(nav: Nav) {
     val dashboard by vm.dashboard.collectAsStateWithLifecycle()
     val attention by vm.attention.collectAsStateWithLifecycle()
     val coming by vm.comingUp.collectAsStateWithLifecycle()
+    val account by vm.account.collectAsStateWithLifecycle()
+    val mine by vm.myListings.collectAsStateWithLifecycle()
+    val bookings by vm.bookings.collectAsStateWithLifecycle()
+    val requests by vm.requests.collectAsStateWithLifecycle()
     var reviewing by rememberSaveable { mutableStateOf<String?>(null) }
     var stars by rememberSaveable { mutableIntStateOf(5) }
     var body by rememberSaveable { mutableStateOf("") }
 
     val act: (Attention) -> Unit = { row ->
         when {
-            row.taskId == "service" -> vm.completeTask("service")
+            row.taskId != null && row.item.action == "Block dates" -> vm.completeTask(row.taskId)
             row.taskId == "review" -> { reviewing = row.taskId; body = "" }
             row.route == "s33" && row.bookingRef != null -> {
                 vm.bookings.value.firstOrNull { it.ref == row.bookingRef }?.let { vm.openThread(it.renter.handle) }
@@ -87,14 +90,25 @@ fun S24OwnerDashboard(nav: Nav) {
         appBar = {
             AppBar(
                 title = "Your gear",
-                subtitle = "KAVITHA SELVAM · OWNER",
+                subtitle = account?.person?.name?.let { "${it.uppercase()} · OWNER" },
                 actions = { GearIconButton(Lucide.CalendarDays, "Calendar", { nav.to("s27") }, size = 44.dp) },
             )
         },
         tabBar = { MainTabBar(nav, MainTab.PROFILE) },
     ) {
         VGap(Space.s)
-        EarningsHero(dashboard.earnings, dashboard.nextPayout)
+        if (mine.isEmpty()) {
+            EmptyState(
+                icon = Lucide.Store,
+                headline = "Lend your gear",
+                body = "List something you own and it's in search straight away.",
+                actionLabel = "List your first item",
+                onAction = { vm.startListing { nav.to("s25") } },
+            )
+            VGap(Space.section)
+            return@GearScreen
+        }
+        EarningsHero(dashboard.earnings, dashboard.nextPayout, dashboard.weekly)
 
         VGap(Space.sm)
         Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
@@ -107,7 +121,7 @@ fun S24OwnerDashboard(nav: Nav) {
         Eyebrow("Needs you now")
         VGap(Space.s)
         if (attention.isEmpty()) {
-            Text("Nothing waiting on you. Requests and late returns show up here.", style = GearType.bodyS, color = GearText.tertiary)
+            Text("Nothing waiting on you.", style = GearType.bodyS, color = GearText.tertiary)
         }
         attention.forEach { row ->
             AttentionRow(row.item) { act(row) }
@@ -123,7 +137,7 @@ fun S24OwnerDashboard(nav: Nav) {
                     Text("No pickups or returns in the next three days.", style = GearType.bodyS, color = GearText.tertiary)
                 }
                 coming.forEachIndexed { i, event ->
-                    val today = event.at.toLocalDate() == DemoClock.today
+                    val today = event.at.toLocalDate() == AppClock.today
                     Row(
                         Modifier
                             .fillMaxWidth()
@@ -149,21 +163,53 @@ fun S24OwnerDashboard(nav: Nav) {
             }
         }
 
-        VGap(Space.l)
-        Eyebrow("Worth doing")
-        VGap(Space.s)
-        // The two insights edit real listings: the Torq's photos, the kayak's price.
-        Demo.ownerInsights.forEach { insight ->
-            InsightCard(insight.headline, insight.body, insight.action, {
-                if (insight.action == "Add photos") vm.editListing(Demo.torq.id) { nav.to("s25") }
-                else vm.editListing(Demo.kayak.id) { nav.to("s26") }
-            })
+        // Worked out from the member's own listings: too few photos, or no
+        // bookings in a month — each one opens the listing to fix it.
+        val monthAgo = AppClock.today.minusDays(30)
+        val live = mine.filter { it.status == com.gearloop.app.data.ListingStatus.PUBLISHED }
+        val fewPhotos = live.firstOrNull { it.photos.count(com.gearloop.app.data.Photos::isFile) == 0 && it.photos.size < 3 }
+        val idle = live.firstOrNull { item -> bookings.none { it.item.id == item.id && !it.start.isBefore(monthAgo) } }
+        if (fewPhotos != null || idle != null) {
+            VGap(Space.l)
+            Eyebrow("Worth doing")
             VGap(Space.s)
+            fewPhotos?.let { item ->
+                InsightCard(
+                    "${item.shortTitle} has ${item.photos.size} photo${if (item.photos.size == 1) "" else "s"}",
+                    "Adding the seven condition angles takes about two minutes.",
+                    "Add photos",
+                    { vm.editListing(item.id) { nav.to("s25") } },
+                )
+                VGap(Space.s)
+            }
+            idle?.takeIf { it.id != fewPhotos?.id }?.let { item ->
+                val market = vm.marketFor(item.sport, item.id)
+                InsightCard(
+                    "${item.shortTitle} hasn't been booked in 30 days",
+                    if (market.count > 0) "Similar ${item.sport.lowercase()} gear nearby rents for about ${lkr(market.median)} a day. Yours is ${lkr(item.pricePerDay)}."
+                    else "Try instant book or a lower daily rate to get the first booking.",
+                    "Review pricing",
+                    { vm.editListing(item.id) { nav.to("s26") } },
+                )
+                VGap(Space.s)
+            }
         }
 
         VGap(Space.m)
+        Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+            GearButton(
+                "Your listings (${mine.size})", { nav.to(com.gearloop.app.nav.Routes.MY_LISTINGS) }, Modifier.weight(1f),
+                type = ButtonType.SECONDARY, size = ButtonSize.M, icon = Lucide.Tags,
+            )
+            // With the count, like the listings beside it, so a waiting request shows from here.
+            GearButton(
+                if (requests.isEmpty()) "Requests" else "Requests (${requests.size})", { nav.to("s28") }, Modifier.weight(1f),
+                type = ButtonType.SECONDARY, size = ButtonSize.M, icon = Lucide.Inbox,
+            )
+        }
+        VGap(Space.s)
         GearButton(
-            "Add a listing", { vm.startListing(Seed.OWNER) { nav.to("s25") } }, Modifier.fillMaxWidth(),
+            "Add a listing", { vm.startListing { nav.to("s25") } }, Modifier.fillMaxWidth(),
             icon = Lucide.Plus,
         )
         VGap(Space.section)
@@ -180,7 +226,7 @@ fun S24OwnerDashboard(nav: Nav) {
             },
             confirmEnabled = body.trim().length >= 10,
         ) {
-            Text("How was Mohamed as a renter? Other owners read this before they accept a request.", style = GearType.bodyS, color = GearText.secondary)
+            Text("Other owners read this before they accept a request.", style = GearType.bodyS, color = GearText.secondary)
             VGap(Space.s)
             StarPicker(stars, { stars = it })
             VGap(Space.s)
@@ -190,7 +236,7 @@ fun S24OwnerDashboard(nav: Nav) {
 }
 
 @Composable
-private fun EarningsHero(earnings: Int, payout: Int) {
+private fun EarningsHero(earnings: Int, payout: Int, weekly: List<Float>) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -204,14 +250,14 @@ private fun EarningsHero(earnings: Int, payout: Int) {
             Text(lkr(earnings), style = GearType.dataXl, color = GearText.onDark)
             Spacer(Modifier.weight(1f))
             Sparkline(
-                Demo.earningsSpark,
+                weekly,
                 Modifier.width(96.dp).height(36.dp),
                 color = GearColor.HiVis500,
             )
         }
         VGap(Space.sm)
         Text(
-            "Next payout ${lkr(payout)} · ${Demo.NEXT_PAYOUT_DATE}",
+            if (payout > 0) "${lkr(payout)} more to come as current rentals are returned" else "Paid into your wallet when each rental is returned",
             style = GearType.bodyS,
             color = GearColor.Chalk300,
         )

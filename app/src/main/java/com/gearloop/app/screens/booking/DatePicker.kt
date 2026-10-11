@@ -244,8 +244,7 @@ private fun CalendarLegend() {
     }
     VGap(Space.s)
     Text(
-        "Buffer is turnaround time — the owner needs a day to rinse and check the gear " +
-            "before it goes out again. Tap a first and a last day to choose your dates.",
+        "Buffer is a day for the owner to check the gear. Tap a first and a last day.",
         style = GearType.bodyS,
         color = GearText.secondary,
     )

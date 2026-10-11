@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -72,23 +73,32 @@ fun S29SearchMap(nav: Nav) {
     val filters = LocalSearchFilters.current
     var selected by rememberSaveable { mutableIntStateOf(0) }
     val found = filters.apply(all).sortedBy { it.distanceKm }
-    val pins = found.take(3)
+    val pins = found.take(MAX_PINS)
     val open: (GearItem) -> Unit = { vm.select(it); nav.to("s07") }
+    val area = profile?.person?.area?.ifBlank { null } ?: "Jaffna"
 
     Box(Modifier.fillMaxSize().background(GearColor.Chalk100)) {
         MapCanvas(Modifier.fillMaxSize(), showRadius = false)
 
-        // Price pins at the three spots the design placed them. Selected pin
-        // inverts and scales; a second tap on it opens the listing.
-        val spots = listOf((-30).dp to (-40).dp, 70.dp to 20.dp, (-90).dp to 60.dp)
-        pins.forEachIndexed { i, item ->
-            PricePin(
-                item, selected == i,
-                Modifier.align(Alignment.Center).offset(x = spots[i].first, y = spots[i].second),
-            ) { if (selected == i) open(item) else selected = i }
-        }
-        if (found.size > pins.size) {
-            ClusterPin(found.size - pins.size, Modifier.align(Alignment.Center).offset(x = 40.dp, y = (-120).dp))
+        // Each pin sits at its real distance from you, on a bearing that is
+        // fixed per listing, so the same item is always in the same place.
+        BoxWithConstraints(Modifier.fillMaxSize().padding(bottom = 150.dp)) {
+            val reach = (found.maxOfOrNull { it.distanceKm } ?: 1.0).coerceAtLeast(2.0)
+            val radius = minOf(maxWidth, maxHeight) * 0.42f
+            pins.forEachIndexed { i, item ->
+                val bearing = ((item.id.hashCode() and 0x7fffffff) % 360) * Math.PI / 180
+                val r = (item.distanceKm / reach).toFloat().coerceIn(0.12f, 1f)
+                PricePin(
+                    item, selected == i,
+                    Modifier.align(Alignment.Center).offset(
+                        x = radius * (r * kotlin.math.cos(bearing)).toFloat(),
+                        y = radius * (r * kotlin.math.sin(bearing)).toFloat(),
+                    ),
+                ) { if (selected == i) open(item) else selected = i }
+            }
+            if (found.size > pins.size) {
+                ClusterPin(found.size - pins.size, Modifier.align(Alignment.TopEnd).padding(top = 140.dp, end = Space.screen))
+            }
         }
 
         Row(
@@ -99,30 +109,20 @@ fun S29SearchMap(nav: Nav) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(Space.s),
         ) {
+            GearIconButton(Lucide.ChevronLeft, "Back", { nav.back() }, size = 52.dp)
             Box(Modifier.weight(1f)) {
                 SearchBar(
                     placeholder = "Search this area",
-                    value = "Gear · ${profile?.person?.area ?: "Jaffna"}",
-                    onClick = { nav.back() },
+                    value = filters.query.ifBlank { "${found.size} near $area" },
+                    onClick = { nav.to("s05") },
                 )
             }
             GearIconButton(
                 Lucide.BellRing, "Alert me about new gear in this area",
-                { vm.createAlert("ALERT", "New gear near ${profile?.person?.area ?: "Jaffna"} · ${filters.describe()}") },
+                { vm.createAlert("ALERT", "New gear near $area · ${filters.describe()}") },
                 size = 52.dp,
             )
         }
-
-        GearIconButton(
-            icon = Lucide.List,
-            contentDescription = "List view",
-            onClick = { nav.back() },
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .statusBarsPadding()
-                .padding(top = 76.dp, end = Space.screen),
-            size = 48.dp,
-        )
 
         Row(
             Modifier
@@ -132,7 +132,12 @@ fun S29SearchMap(nav: Nav) {
                 .padding(horizontal = Space.screen, vertical = Space.m),
             horizontalArrangement = Arrangement.spacedBy(Space.sm),
         ) {
-            (pins.getOrNull(selected)?.let { listOf(it) + (found - it) } ?: found).take(6).forEach { item ->
+            if (found.isEmpty()) {
+                GearCard(Modifier.width(300.dp)) {
+                    Text("Nothing matches your filters here.", style = GearType.bodyM, color = GearText.secondary, modifier = Modifier.padding(Space.cardPadding))
+                }
+            }
+            (pins.getOrNull(selected)?.let { listOf(it) + (found - it) } ?: found).take(8).forEach { item ->
                 Box(Modifier.width(300.dp)) {
                     ListingCard(item, { open(item) }, layout = ListingLayout.LIST, onToggleSave = { vm.toggleSaved(item) })
                 }
@@ -140,6 +145,8 @@ fun S29SearchMap(nav: Nav) {
         }
     }
 }
+
+private const val MAX_PINS = 12
 
 @Composable
 private fun PricePin(item: GearItem, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
@@ -184,6 +191,7 @@ private fun ClusterPin(count: Int, modifier: Modifier = Modifier) {
 fun S30TripPlanner(nav: Nav) {
     val vm: FitDiscoveryViewModel = gearViewModel()
     val tripState by vm.trip.collectAsStateWithLifecycle()
+    var choosingPlace by rememberSaveable { mutableStateOf(false) }
     val trip = tripState ?: return
     val first = trip.rent.firstOrNull()?.listing
 
@@ -192,7 +200,9 @@ fun S30TripPlanner(nav: Nav) {
         footer = {
             StickyFooter(priceValue = lkr(trip.total), priceCaption = "${trip.itemCount} items · ${trip.days} days") {
                 GearButton(
-                    "Book the kit",
+                    // Each rental is its own booking, so this opens the first one.
+                    // "Book the kit" promised a single checkout for all of them.
+                    "Start booking",
                     { if (first != null) { vm.select(first); nav.to("s07") } },
                     size = ButtonSize.M,
                     enabled = first != null,
@@ -201,7 +211,7 @@ fun S30TripPlanner(nav: Nav) {
         },
     ) {
         Box(Modifier.fillMaxWidth().height(200.dp)) {
-            GearImage(R.drawable.place_arugam_bay, trip.destination, Modifier.fillMaxSize())
+            GearImage(placePhoto(trip.destination), trip.destination, Modifier.fillMaxSize())
             PhotoGradient(Modifier.fillMaxSize())
             Row(
                 Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = Space.sm, vertical = Space.s),
@@ -219,9 +229,29 @@ fun S30TripPlanner(nav: Nav) {
         Column(Modifier.padding(horizontal = Space.screen).offset(y = (-16).dp)) {
             GearCard(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(Space.cardPadding)) {
-                    TripField("Destination", trip.destination, Lucide.MapPin)
+                    Row(
+                        Modifier.fillMaxWidth().clickable(role = Role.Button, onClickLabel = "Change the destination") { choosingPlace = true },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(Modifier.weight(1f)) { TripField("Destination", trip.destination, Lucide.MapPin) }
+                        GearIcon(Lucide.Pencil, null, size = IconSize.s, tint = GearColor.Chalk500)
+                    }
                     GearDivider(Modifier.padding(vertical = Space.s))
                     TripField("Dates", trip.dates, Lucide.Calendar)
+                    VGap(Space.s)
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                        GearIconButton(Lucide.ChevronLeft, "Start a day earlier", { vm.setTripDates(trip.start.minusDays(1), trip.days) }, size = 44.dp, iconSize = IconSize.s)
+                        GearIconButton(Lucide.ChevronRight, "Start a day later", { vm.setTripDates(trip.start.plusDays(1), trip.days) }, size = 44.dp, iconSize = IconSize.s)
+                        Spacer(Modifier.weight(1f))
+                        Text("${trip.days} ${if (trip.days == 1) "day" else "days"}", style = GearType.dataM, color = GearText.primary)
+                        Stepper(
+                            value = "",
+                            onMinus = { vm.setTripDates(trip.start, trip.days - 1) },
+                            onPlus = { vm.setTripDates(trip.start, trip.days + 1) },
+                            minusEnabled = trip.days > 1,
+                            plusEnabled = trip.days < 21,
+                        )
+                    }
                     GearDivider(Modifier.padding(vertical = Space.s))
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         GearIcon(Lucide.Users, null, size = IconSize.m, tint = GearColor.Chalk500)
@@ -242,8 +272,8 @@ fun S30TripPlanner(nav: Nav) {
                         )
                     }
                     VGap(Space.sm)
-                    Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                        listOf("Surfing", "Camping", "Trekking").forEach { sport ->
+                    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.s), verticalArrangement = Arrangement.spacedBy(Space.s)) {
+                        com.gearloop.app.data.Demo.sports.map { it.first }.forEach { sport ->
                             Chip(sport, selected = sport in trip.sports, onClick = { vm.toggleTripSport(sport) })
                         }
                     }
@@ -258,8 +288,10 @@ fun S30TripPlanner(nav: Nav) {
             }
 
             VGap(Space.l)
-            Eyebrow("You already own")
-            VGap(Space.s)
+            if (trip.own.isNotEmpty()) {
+                Eyebrow("You already own")
+                VGap(Space.s)
+            }
             trip.own.forEach { owned ->
                 Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     GearIcon(Lucide.Check, null, size = IconSize.m, tint = GearColor.Success500)
@@ -365,6 +397,37 @@ fun S30TripPlanner(nav: Nav) {
             VGap(Space.section)
         }
     }
+
+    if (choosingPlace) {
+        DestinationDialog(trip.destination, onPick = { vm.setTripDestination(it); choosingPlace = false }, onDismiss = { choosingPlace = false })
+    }
+}
+
+/** Where a trip can be planned to, and the photograph each one shows. */
+private val places = listOf("Arugam Bay", "Casuarina Beach", "Jaffna", "Point Pedro", "Delft Island", "Trincomalee", "Knuckles Range", "Ella")
+
+private fun placePhoto(destination: String): Int = when (destination) {
+    "Casuarina Beach", "Point Pedro", "Delft Island", "Trincomalee" -> R.drawable.place_casuarina
+    "Jaffna" -> R.drawable.place_jaffna
+    else -> R.drawable.place_arugam_bay
+}
+
+@Composable
+private fun DestinationDialog(current: String, onPick: (String) -> Unit, onDismiss: () -> Unit) {
+    var typed by rememberSaveable { mutableStateOf(current) }
+    GearDialog(
+        title = "Where are you going?",
+        onDismiss = onDismiss,
+        confirmLabel = "Use this",
+        onConfirm = { onPick(typed) },
+        confirmEnabled = typed.isNotBlank(),
+    ) {
+        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.s), verticalArrangement = Arrangement.spacedBy(Space.s)) {
+            places.forEach { p -> Chip(p, selected = typed == p, onClick = { typed = p }) }
+        }
+        VGap(Space.s)
+        GearTextField(typed, label = "Or type a place", onValueChange = { typed = it })
+    }
 }
 
 @Composable
@@ -382,19 +445,20 @@ private fun TripField(label: String, value: String, icon: com.gearloop.app.ui.ic
 /** One way out of an empty search, with the number of results it really buys. */
 private data class Recovery(
     val title: String,
-    val body: String,
+    val body: String?,
     val icon: com.gearloop.app.ui.icons.LucideIcon,
     val apply: (SearchFilters) -> Unit,
 )
 
 private val recoveries = listOf(
-    Recovery("Any board length", "Drop the length filter and keep the rest.", Lucide.Ruler) { it.lengths.clear() },
-    Recovery("Any condition grade", "Grade B and C boards are still checked at handover.", Lucide.Tag) { it.grades.clear() },
-    Recovery("Any price", "Remove the daily price range.", Lucide.Banknote) { it.priceLower = 0f; it.priceUpper = 1f },
-    Recovery("Include near fits", "Gear that is workable for your size, not only perfect.", Lucide.Ruler) { it.fitOnly = false },
-    Recovery("Not only instant book", "Owners usually answer a request within a few hours.", Lucide.Zap) { it.instantOnly = false },
-    Recovery("Pickup as well as delivery", "Collect it yourself, or from a GearPoint.", Lucide.Truck) { it.delivery = false },
-    Recovery("Within 25 km", "Reaches past the 5 km default to the rest of the peninsula.", Lucide.MapPin) { it.distanceIndex = SearchFilters.DISTANCES.lastIndex },
+    Recovery("Any board length", null, Lucide.Ruler) { it.lengths.clear() },
+    Recovery("Any condition grade", "Every grade is checked at handover.", Lucide.Tag) { it.grades.clear() },
+    Recovery("Any price", null, Lucide.Banknote) { it.priceLower = 0f; it.priceUpper = 1f },
+    Recovery("Include near fits", "Workable for your size, if not perfect.", Lucide.Ruler) { it.fitOnly = false },
+    Recovery("Not only instant book", "Owners usually answer within a few hours.", Lucide.Zap) { it.instantOnly = false },
+    Recovery("Pickup as well as delivery", null, Lucide.Truck) { it.delivery = false },
+    Recovery("Any sport", null, Lucide.LayoutGrid) { it.sports.clear() },
+    Recovery("Within 25 km", null, Lucide.MapPin) { it.distanceIndex = SearchFilters.DISTANCES.lastIndex },
 )
 
 /**
@@ -508,7 +572,7 @@ fun S39NoResults(nav: Nav) {
 @Composable
 private fun RecoveryCard(
     title: String,
-    body: String,
+    body: String?,
     results: Int,
     icon: com.gearloop.app.ui.icons.LucideIcon,
     onClick: () -> Unit,
@@ -519,8 +583,10 @@ private fun RecoveryCard(
             Spacer(Modifier.width(Space.sm))
             Column(Modifier.weight(1f)) {
                 Text(title, style = GearType.headingS, color = GearText.primary)
-                VGap(3.dp)
-                Text(body, style = GearType.bodyS, color = GearText.secondary)
+                if (body != null) {
+                    VGap(3.dp)
+                    Text(body, style = GearType.bodyS, color = GearText.secondary)
+                }
             }
             Spacer(Modifier.width(Space.s))
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -574,7 +640,7 @@ fun S42ListingReviews(nav: Nav) {
     ) {
         VGap(Space.m)
         Row(verticalAlignment = Alignment.Bottom) {
-            Text("★ ${owner.ratingText}", style = GearType.dataXl, color = GearText.primary)
+            Text(if (owner.reviews > 0) "★ ${owner.ratingText}" else "★ –", style = GearType.dataXl, color = GearText.primary)
             Spacer(Modifier.width(Space.s))
             Text(
                 "${owner.reviews} reviews of ${owner.name.substringBefore(' ')}",
@@ -588,7 +654,7 @@ fun S42ListingReviews(nav: Nav) {
             VGap(Space.m)
             Banner(
                 title = "How was it?",
-                text = "You rented this ${toReview.dates}. Your review appears here, and on ${owner.name.substringBefore(' ')}'s profile, as soon as you post it.",
+                text = "You rented this ${toReview.dates}.",
                 kind = BannerKind.INFO,
                 action = "Write a review",
                 onAction = { writing = true },
@@ -626,12 +692,6 @@ fun S42ListingReviews(nav: Nav) {
                 }
             }
 
-            VGap(Space.m)
-            Eyebrow("By category")
-            VGap(Space.s)
-            com.gearloop.app.data.Demo.subRatings.forEach { (label, value) ->
-                RatingBar(label, value / 5f, Modifier.padding(vertical = 4.dp), value = String.format("%.2f", value))
-            }
         }
 
         VGap(Space.l)
@@ -650,7 +710,7 @@ fun S42ListingReviews(nav: Nav) {
         // twice on the same screen, word for word.
         shown.forEach { review ->
             ReviewCard(review.entry)
-            if (review.authorHandle == com.gearloop.app.data.repo.Seed.ME) {
+            if (review.authorHandle == vm.me) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     GearLink("Delete my review", { vm.deleteReview(review.id) }, color = GearText.tertiary)
                 }

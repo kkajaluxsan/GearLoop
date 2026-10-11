@@ -78,11 +78,11 @@ object Demo {
         pricePerDay = 2_800,
         distanceKm = 2.4,
         photos = listOf(
-            R.drawable.photo_torq_1,
-            R.drawable.photo_torq_2,
-            R.drawable.photo_torq_3,
-            R.drawable.photo_torq_4,
-            R.drawable.photo_torq_5,
+            "torq_1",
+            "torq_2",
+            "torq_3",
+            "torq_4",
+            "torq_5",
         ),
         owner = kavitha,
         fit = Fit.PERFECT,
@@ -101,7 +101,7 @@ object Demo {
         grade = Grade.A,
         pricePerDay = 1_900,
         distanceKm = 1.1,
-        photos = listOf(R.drawable.photo_trek_marlin),
+        photos = listOf("trek_marlin"),
         owner = kavitha,
         fit = Fit.GOOD,
         sport = "Cycling",
@@ -117,7 +117,7 @@ object Demo {
         grade = Grade.B,
         pricePerDay = 3_200,
         distanceKm = 4.7,
-        photos = listOf(R.drawable.photo_nsp_sup),
+        photos = listOf("nsp_sup"),
         owner = ayesha,
         fit = Fit.GOOD,
         sport = "SUP",
@@ -134,7 +134,7 @@ object Demo {
         grade = Grade.B,
         pricePerDay = 1_400,
         distanceKm = 3.2,
-        photos = listOf(R.drawable.photo_quechua_tent),
+        photos = listOf("quechua_tent"),
         owner = thusara,
         fit = Fit.UNKNOWN,
         sport = "Camping",
@@ -150,7 +150,7 @@ object Demo {
         grade = Grade.A,
         pricePerDay = 650,
         distanceKm = 0.8,
-        photos = listOf(R.drawable.photo_ss_bat),
+        photos = listOf("ss_bat"),
         owner = rizwan,
         fit = Fit.PERFECT,
         sport = "Cricket",
@@ -169,7 +169,7 @@ object Demo {
         grade = Grade.B,
         pricePerDay = 900,
         distanceKm = 2.4,
-        photos = listOf(R.drawable.photo_wetsuit),
+        photos = listOf("wetsuit"),
         owner = kavitha,
         fit = Fit.GOOD,
         sport = "Surfing",
@@ -187,7 +187,7 @@ object Demo {
         grade = Grade.A,
         pricePerDay = 400,
         distanceKm = 1.1,
-        photos = listOf(R.drawable.photo_helmet),
+        photos = listOf("helmet"),
         owner = kavitha,
         fit = Fit.WORKABLE,
         sport = "Cycling",
@@ -203,7 +203,7 @@ object Demo {
         grade = Grade.B,
         pricePerDay = 2_400,
         distanceKm = 5.9,
-        photos = listOf(R.drawable.photo_kayak),
+        photos = listOf("kayak"),
         owner = kavitha,
         fit = Fit.GOOD,
         sport = "Kayaking",
@@ -220,7 +220,7 @@ object Demo {
         grade = Grade.B,
         pricePerDay = 1_800,
         distanceKm = 6.3,
-        photos = listOf(R.drawable.photo_climbing_rack),
+        photos = listOf("climbing_rack"),
         owner = dinesh,
         fit = Fit.UNKNOWN,
         sport = "Climbing",
@@ -237,7 +237,7 @@ object Demo {
         grade = Grade.B,
         pricePerDay = 2_600,
         distanceKm = 0.0,
-        photos = listOf(R.drawable.photo_burton_board),
+        photos = listOf("burton_board"),
         owner = nirmal,
         fit = Fit.GOOD,
         sport = "Snowboarding",
@@ -253,7 +253,7 @@ object Demo {
         grade = Grade.B,
         pricePerDay = 3_400,
         distanceKm = 3.6,
-        photos = listOf(R.drawable.photo_santacruz),
+        photos = listOf("santacruz"),
         owner = dinesh,
         fit = Fit.GOOD,
         sport = "Cycling",
@@ -283,7 +283,7 @@ object Demo {
         grade = Grade.A,
         pricePerDay = 350,
         distanceKm = 0.0,
-        photos = listOf(R.drawable.photo_my_helmet),
+        photos = listOf("my_helmet"),
         owner = nirmal,
         fit = Fit.PERFECT,
         sport = "Cycling",
@@ -299,7 +299,7 @@ object Demo {
         grade = Grade.B,
         pricePerDay = 600,
         distanceKm = 0.0,
-        photos = listOf(R.drawable.photo_gear_flatlay),
+        photos = listOf("gear_flatlay"),
         owner = nirmal,
         fit = Fit.UNKNOWN,
         sport = "Camping",
@@ -316,7 +316,7 @@ object Demo {
         grade = Grade.B,
         pricePerDay = 1_200,
         distanceKm = 0.0,
-        photos = listOf(R.drawable.photo_my_kayak),
+        photos = listOf("my_kayak"),
         owner = nirmal,
         fit = Fit.GOOD,
         sport = "Kayaking",
@@ -332,7 +332,7 @@ object Demo {
         grade = Grade.B,
         pricePerDay = 500,
         distanceKm = 0.0,
-        photos = listOf(R.drawable.photo_my_bat),
+        photos = listOf("my_bat"),
         owner = nirmal,
         fit = Fit.PERFECT,
         sport = "Cricket",
@@ -353,7 +353,7 @@ object Demo {
         grade = Grade.B,
         pricePerDay = 2_200,
         distanceKm = 4.7,
-        photos = listOf(R.drawable.photo_sot_kayak),
+        photos = listOf("sot_kayak"),
         owner = ayesha,
         fit = Fit.GOOD,
         sport = "Kayaking",
@@ -384,9 +384,9 @@ object Demo {
     val torqExcluded = listOf("Wax (not included)")
 
     val torqConditionPhotos = listOf(
-        R.drawable.photo_cond_1,
-        R.drawable.photo_cond_2,
-        R.drawable.photo_cond_3,
+        "cond_1",
+        "cond_2",
+        "cond_3",
     )
 
     val handoverMethods = listOf(
@@ -403,7 +403,7 @@ object Demo {
             body = "Board was exactly as described — the dings on the deck are cosmetic and " +
                 "Kavitha showed me every one of them before I took it. Paddles easy, caught " +
                 "plenty at Casuarina.",
-            photos = listOf(R.drawable.photo_torq_3),
+            photos = listOf("torq_3"),
         ),
         ReviewEntry(
             author = thusara,
@@ -551,9 +551,9 @@ object Demo {
     )
 
     val captureAngles = listOf(
-        CaptureAngle("Deck", CaptureAngle.State.CAPTURED, R.drawable.photo_torq_2),
-        CaptureAngle("Bottom", CaptureAngle.State.CAPTURED, R.drawable.photo_torq_5),
-        CaptureAngle("Nose", CaptureAngle.State.CAPTURED, R.drawable.photo_cond_3),
+        CaptureAngle("Deck", CaptureAngle.State.CAPTURED, "torq_2"),
+        CaptureAngle("Bottom", CaptureAngle.State.CAPTURED, "torq_5"),
+        CaptureAngle("Nose", CaptureAngle.State.CAPTURED, "cond_3"),
         CaptureAngle("Tail", CaptureAngle.State.ACTIVE),
         CaptureAngle("Rail L", CaptureAngle.State.PENDING),
         CaptureAngle("Rail R", CaptureAngle.State.PENDING),
@@ -570,13 +570,13 @@ object Demo {
 
     /** The seven angles again at return, for the side-by-side comparison. */
     val returnComparison = listOf(
-        Triple("Deck", R.drawable.photo_torq_2, false),
-        Triple("Bottom", R.drawable.photo_torq_5, false),
-        Triple("Nose", R.drawable.photo_cond_3, false),
-        Triple("Tail", R.drawable.photo_cond_1, true),
-        Triple("Rail L", R.drawable.photo_torq_4, false),
-        Triple("Rail R", R.drawable.photo_torq_4, false),
-        Triple("Fin box", R.drawable.photo_cond_2, false),
+        Triple("Deck", "torq_2", false),
+        Triple("Bottom", "torq_5", false),
+        Triple("Nose", "cond_3", false),
+        Triple("Tail", "cond_1", true),
+        Triple("Rail L", "torq_4", false),
+        Triple("Rail R", "torq_4", false),
+        Triple("Fin box", "cond_2", false),
     )
 
     // --------------------------------------------------------------- swap
@@ -597,17 +597,17 @@ object Demo {
     )
 
     val burtonValuation = listOf(
-        "MSRP" to grouped(78_000),
+        "New price" to grouped(78_000),
         "Age 3 yr" to "−38%",
         "Grade B" to "×0.85",
-        "FMV" to grouped(BURTON_FMV),
+        "Worth now" to grouped(BURTON_FMV),
     )
 
     val santaCruzValuation = listOf(
-        "MSRP" to grouped(96_000),
+        "New price" to grouped(96_000),
         "Age 2 yr" to "−26%",
         "Grade B" to "×0.85",
-        "FMV" to grouped(SANTACRUZ_FMV),
+        "Worth now" to grouped(SANTACRUZ_FMV),
     )
 
     val swapTerms = listOf(

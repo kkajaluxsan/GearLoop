@@ -5,6 +5,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.ui.unit.Dp
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,11 +44,12 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 import com.gearloop.app.data.DamageMark
 import com.gearloop.app.data.Demo
-import com.gearloop.app.data.DemoClock
+import com.gearloop.app.data.AppClock
 import com.gearloop.app.data.countdown
 import com.gearloop.app.data.lkr
 import com.gearloop.app.data.stamp
 import com.gearloop.app.data.repo.Claim
+import com.gearloop.app.data.repo.ClaimEvidence
 import com.gearloop.app.nav.Nav
 import com.gearloop.app.ui.vm.MoneyViewModel
 import com.gearloop.app.ui.vm.gearViewModel
@@ -65,31 +69,46 @@ import com.gearloop.app.ui.theme.Space
 /* ------------------------------------------------------------------ S-40 */
 
 /**
- * The one desktop screen: the claims adjudication console.
+ * The claims adjudication console.
  *
- * Designed at 1440×1024 as the brief specifies. On a phone it is presented as a
- * board — the full-width canvas scrolls horizontally inside a labelled frame,
- * which is how a desktop artboard would be reviewed on a handset anyway.
+ * Designed at 1440×1024 as the brief specifies, for a desk. On a phone it opens
+ * in a phone layout — the queue, then one claim at a time with its evidence
+ * and the ruling under it — so a claim can be ruled on from the handset in
+ * hand. The desktop board is still one tap away, scaled to fit or at 1:1.
  */
 @Composable
 fun S40AdminClaims(nav: Nav) {
-    // A 1440-wide artboard on a 390-wide phone is a genuine presentation
-    // problem. "Fit" scales the whole board down so the layout can be read at a
-    // glance; "Actual size" is 1:1 and pans, for reading the detail.
-    var fitToWidth by rememberSaveable { mutableStateOf(true) }
+    // 0 the phone layout, 1 the board scaled to fit, 2 the board at actual size.
+    var view by rememberSaveable { mutableIntStateOf(0) }
+    val vm: MoneyViewModel = gearViewModel()
+    val account by vm.account.collectAsStateWithLifecycle()
+    if (account?.isAdmin != true) {
+        GearScreen(appBar = { AppBar(title = "Claims desk", onBack = { nav.back() }) }) {
+            EmptyState(
+                icon = Lucide.Lock,
+                headline = "For the claims desk only",
+                body = "Your own claims are in your notifications and on each rental.",
+            )
+        }
+        return
+    }
 
-    Column(Modifier.fillMaxSize().background(GearColor.Chalk100)) {
+    // Its own scaffold, so it needs the keyboard inset the shared ones carry:
+    // without it the rationale field's keyboard covered Issue ruling.
+    Column(Modifier.fillMaxSize().background(GearColor.Chalk100).imePadding()) {
         SystemBarIcons(darkSurface = false)
-        AppBar(title = "Admin console", subtitle = "Desktop · 1440 × 1024", onBack = { nav.back() })
+        AppBar(title = "Claims desk", subtitle = account?.person?.name?.let { "${it.uppercase()} · ADJUDICATOR" }, onBack = { nav.back() })
 
         Box(Modifier.padding(horizontal = Space.screen, vertical = Space.s)) {
             SegmentedControl(
-                options = listOf("Fit to screen", "Actual size"),
-                selectedIndex = if (fitToWidth) 0 else 1,
-            ) { fitToWidth = it == 0 }
+                options = listOf("Phone", "Desktop", "Desktop 1:1"),
+                selectedIndex = view,
+            ) { view = it }
         }
 
-        if (fitToWidth) {
+        if (view == 0) {
+            PhoneDesk(vm, Modifier.weight(1f).fillMaxWidth())
+        } else if (view == 1) {
             Column(
                 Modifier
                     .weight(1f)
@@ -112,7 +131,7 @@ fun S40AdminClaims(nav: Nav) {
                 }
                 Spacer(Modifier.height(Space.s))
                 Text(
-                    "Scaled to fit. Switch to actual size to read the panels.",
+                    "Scaled to fit. Desktop 1:1 pans at full size.",
                     style = GearType.bodyS,
                     color = GearText.tertiary,
                 )
@@ -135,6 +154,45 @@ fun S40AdminClaims(nav: Nav) {
 private val BOARD_W = 1440.dp
 private val BOARD_H = 1024.dp
 
+/** The desk on a handset: the queue, or one claim with its evidence and ruling stacked. */
+@Composable
+private fun PhoneDesk(vm: MoneyViewModel, modifier: Modifier = Modifier) {
+    val queue by vm.queue.collectAsStateWithLifecycle()
+    var openRef by rememberSaveable { mutableStateOf<String?>(null) }
+    val claim = queue.firstOrNull { it.ref == openRef }
+    // Back from a claim is back to the queue, not off the desk.
+    androidx.activity.compose.BackHandler(enabled = claim != null) { openRef = null }
+    Column(modifier.verticalScroll(rememberSavedScrollState())) {
+        if (claim == null) {
+            if (queue.isEmpty()) {
+                Box(Modifier.padding(Space.screen)) {
+                    EmptyState(icon = Lucide.Inbox, headline = "The queue is empty", body = "No claims are waiting.")
+                }
+            } else {
+                ClaimQueue(queue, null, Modifier.fillMaxWidth()) { openRef = it }
+            }
+        } else {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = Space.screen, vertical = Space.s),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                GearButton("All claims", { openRef = null }, type = ButtonType.GHOST, size = ButtonSize.M, icon = Lucide.ChevronLeft)
+                Spacer(Modifier.weight(1f))
+                Text(lkr(claim.amount), style = GearType.dataL, color = GearText.primary)
+            }
+            Text(
+                "${claim.ref} · ${claim.respondent.name} vs ${claim.claimant.name}",
+                style = GearType.bodyS,
+                color = GearText.secondary,
+                modifier = Modifier.padding(horizontal = Space.screen),
+            )
+            EvidenceWorkspace(claim, vm.evidenceFor(claim), vm.returnFrames(claim), Modifier.fillMaxWidth(), paneHeight = 200.dp)
+            AdjudicationPanel(claim, vm, Modifier.fillMaxWidth(), scroll = false)
+            Spacer(Modifier.height(Space.section).navigationBarsPadding())
+        }
+    }
+}
+
 /**
  * S-40 · Read the claims queue — every claim on the platform, undecided first;
  * Update one with a ruling (award and stated reason), a request for more
@@ -145,6 +203,7 @@ private val BOARD_H = 1024.dp
 private fun DesktopCanvas(modifier: Modifier = Modifier) {
     val vm: MoneyViewModel = gearViewModel()
     val queue by vm.queue.collectAsStateWithLifecycle()
+    val account by vm.account.collectAsStateWithLifecycle()
     var selectedRef by rememberSaveable { mutableStateOf<String?>(null) }
     val claim = queue.firstOrNull { it.ref == selectedRef } ?: queue.firstOrNull()
 
@@ -174,7 +233,7 @@ private fun DesktopCanvas(modifier: Modifier = Modifier) {
                 Text(lkr(claim.amount), style = GearType.dataL, color = GearText.onDark)
                 Spacer(Modifier.width(Space.l))
                 // A 48-hour service level from the moment the claim was raised.
-                val sla = ChronoUnit.MILLIS.between(DemoClock.now(), claim.createdAt.plusHours(48))
+                val sla = ChronoUnit.MILLIS.between(AppClock.now(), claim.createdAt.plusHours(48))
                 Row(
                     Modifier
                         .clip(GearShape.xs)
@@ -194,17 +253,17 @@ private fun DesktopCanvas(modifier: Modifier = Modifier) {
             Spacer(Modifier.width(Space.l))
             // Whoever is on the desk, not a party to the claim.
             Column(horizontalAlignment = Alignment.End) {
-                Text(Demo.ADJUDICATOR, style = GearType.labelM, color = GearText.onDark)
+                Text(account?.person?.name ?: Demo.ADJUDICATOR, style = GearType.labelM, color = GearText.onDark)
                 Text("ADJUDICATOR", style = GearType.labelXs, color = GearColor.Chalk300)
             }
             Spacer(Modifier.width(Space.sm))
-            Avatar(Demo.ADJUDICATOR_INITIALS, size = 36.dp)
+            Avatar(account?.person?.initials ?: Demo.ADJUDICATOR_INITIALS, size = 36.dp)
         }
 
         Row(Modifier.fillMaxWidth().weight(1f)) {
             ClaimQueue(queue, claim?.ref, Modifier.width(320.dp).fillMaxHeight()) { selectedRef = it }
             if (claim != null) {
-                EvidenceWorkspace(claim, vm.evidenceFor(claim), Modifier.weight(1f).fillMaxHeight())
+                EvidenceWorkspace(claim, vm.evidenceFor(claim), vm.returnFrames(claim), Modifier.weight(1f).fillMaxHeight())
                 AdjudicationPanel(claim, vm, Modifier.width(380.dp).fillMaxHeight())
             } else {
                 Box(Modifier.weight(1f).fillMaxHeight().padding(Space.l)) {
@@ -217,7 +276,7 @@ private fun DesktopCanvas(modifier: Modifier = Modifier) {
 
 /** How long a claim has been waiting: `19h`, `1d 4h`. */
 private fun ageOf(claim: Claim): String {
-    val hours = ChronoUnit.HOURS.between(claim.createdAt, DemoClock.now()).coerceAtLeast(0)
+    val hours = ChronoUnit.HOURS.between(claim.createdAt, AppClock.now()).coerceAtLeast(0)
     return if (hours < 24) "${hours}h" else "${hours / 24}d ${hours % 24}h"
 }
 
@@ -273,7 +332,13 @@ private fun ClaimQueue(queue: List<Claim>, selected: String?, modifier: Modifier
 }
 
 @Composable
-private fun EvidenceWorkspace(claim: Claim, frames: Pair<Int, Int>, modifier: Modifier = Modifier) {
+private fun EvidenceWorkspace(
+    claim: Claim,
+    evidence: ClaimEvidence,
+    frames: List<Pair<String, String>>,
+    modifier: Modifier = Modifier,
+    paneHeight: Dp = 300.dp,
+) {
     var overlay by rememberSaveable { mutableStateOf(true) }
     Column(modifier.background(GearColor.Chalk100).padding(Space.l)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -288,16 +353,18 @@ private fun EvidenceWorkspace(claim: Claim, frames: Pair<Int, Int>, modifier: Mo
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.m)) {
             EvidencePane(
                 label = "AT PICKUP",
-                stamp = "9.7134°N 80.0246°E",
-                photo = frames.first,
+                stamp = evidence.pickupStamp,
+                photo = evidence.pickupPhoto,
                 modifier = Modifier.weight(1f),
+                height = paneHeight,
             )
             EvidencePane(
                 label = "ON RETURN",
-                stamp = "9.7131°N 80.0244°E",
-                photo = frames.second,
+                stamp = evidence.returnStamp,
+                photo = evidence.returnPhoto,
                 modifier = Modifier.weight(1f),
                 highlight = overlay,
+                height = paneHeight,
             )
         }
         VGap(Space.s)
@@ -310,26 +377,29 @@ private fun EvidenceWorkspace(claim: Claim, frames: Pair<Int, Int>, modifier: Mo
             VGap(4.dp)
             Text("Renter's evidence: ${claim.renterEvidence}", style = GearType.bodyS, color = GearText.secondary)
         }
+        if (claim.renterPhotos.isNotEmpty()) {
+            VGap(Space.s)
+            Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                claim.renterPhotos.take(6).forEach { GearImage(it, "Renter's evidence photo", Modifier.size(96.dp), GearShape.sm) }
+            }
+        }
 
         VGap(Space.m)
         GearCard(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(Space.m)) {
                 Eyebrow("Capture integrity")
                 VGap(Space.s)
-                Row(horizontalArrangement = Arrangement.spacedBy(Space.l)) {
-                    IntegrityCheck("Both parties present", true)
-                    IntegrityCheck("Same angle", true)
-                    IntegrityCheck("Geotag within 40 m", true)
-                    IntegrityCheck("Unedited originals", true)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.l), verticalArrangement = Arrangement.spacedBy(Space.s)) {
+                    evidence.checks.forEach { (label, ok) -> IntegrityCheck(label, ok) }
                 }
             }
         }
 
         VGap(Space.m)
-        Eyebrow("All seven angles")
+        Eyebrow("Every angle on return")
         VGap(Space.s)
-        Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-            Demo.returnComparison.forEach { (label, photo, _) ->
+        Row(Modifier.horizontalScroll(rememberSavedScrollState()), horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+            frames.forEach { (label, photo) ->
                 val changed = label == claim.area
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Box(
@@ -359,9 +429,10 @@ private fun EvidenceWorkspace(claim: Claim, frames: Pair<Int, Int>, modifier: Mo
 private fun EvidencePane(
     label: String,
     stamp: String,
-    photo: Int,
+    photo: String,
     modifier: Modifier = Modifier,
     highlight: Boolean = false,
+    height: Dp = 300.dp,
 ) {
     Column(modifier) {
         Text(
@@ -370,7 +441,7 @@ private fun EvidencePane(
             color = if (highlight) GearColor.Danger500 else GearText.tertiary,
         )
         VGap(6.dp)
-        Box(Modifier.fillMaxWidth().height(300.dp)) {
+        Box(Modifier.fillMaxWidth().height(height)) {
             GearImage(photo, label, Modifier.fillMaxSize(), GearShape.md)
             if (highlight) {
                 Box(
@@ -410,23 +481,26 @@ private fun IntegrityCheck(label: String, ok: Boolean) {
 }
 
 @Composable
-private fun AdjudicationPanel(claim: Claim, vm: MoneyViewModel, modifier: Modifier = Modifier) {
+private fun AdjudicationPanel(claim: Claim, vm: MoneyViewModel, modifier: Modifier = Modifier, scroll: Boolean = true) {
     // The award can never exceed what was claimed, or the cap the severity sets.
     val ceiling = minOf(claim.amount, claim.cap)
     // Keyed on the claim, so moving to another claim starts its own draft ruling.
     var award by rememberSaveable(claim.ref) { mutableIntStateOf(claim.award ?: (ceiling * 7 / 10) / 100 * 100) }
     var rationale by rememberSaveable(claim.ref) { mutableStateOf(claim.rationale.orEmpty()) }
-    val median = (ceiling * 67 / 100) / 100 * 100
+    // Precedent is what this desk has actually awarded at the same severity.
+    val queue by vm.queue.collectAsStateWithLifecycle()
+    val earlier = queue.filter { it.decided && it.severity == claim.severity && it.ref != claim.ref }.mapNotNull { it.award }.sorted()
+    val median = earlier.getOrNull(earlier.size / 2)?.coerceAtMost(ceiling)
     Column(
         modifier
             .background(GearSurface.card)
-            .verticalScroll(rememberSavedScrollState())
+            .then(if (scroll) Modifier.verticalScroll(rememberSavedScrollState()) else Modifier)
             .padding(Space.l),
     ) {
         Text("Adjudication", style = GearType.headingL, color = GearText.primary)
         Spacer(Modifier.height(3.dp))
         Text(
-            "${Demo.ADJUDICATOR} · Trust & safety",
+            "${vm.account.collectAsStateWithLifecycle().value?.person?.name ?: Demo.ADJUDICATOR} · Trust & safety",
             style = GearType.bodyS,
             color = GearText.secondary,
         )
@@ -476,7 +550,8 @@ private fun AdjudicationPanel(claim: Claim, vm: MoneyViewModel, modifier: Modifi
             Column(Modifier.weight(1f)) {
                 Text("Similar rulings", style = GearType.labelL, color = GearColor.Marine700)
                 Text(
-                    "${claim.severity.label} damage, Grade B gear. Median award ${lkr(median)}.",
+                    if (median == null) "No earlier rulings on ${claim.severity.label.lowercase()} damage yet."
+                    else "${earlier.size} earlier ${claim.severity.label.lowercase()} ruling${if (earlier.size > 1) "s" else ""}. Median award ${lkr(median)}.",
                     style = GearType.bodyS,
                     color = GearColor.Marine700,
                 )
@@ -499,8 +574,6 @@ private fun AdjudicationPanel(claim: Claim, vm: MoneyViewModel, modifier: Modifi
             Eyebrow("Rationale")
             VGap(Space.s)
             Text(claim.rationale.orEmpty(), style = GearType.bodyM, color = GearText.body)
-            VGap(Space.s)
-            Text("Shown to both parties with the ruling.", style = GearType.bodyS, color = GearText.tertiary)
         } else {
             RulingControls(claim, vm, ceiling, median, award, { award = it }, rationale, { rationale = it })
         }
@@ -512,7 +585,7 @@ private fun RulingControls(
     claim: Claim,
     vm: MoneyViewModel,
     ceiling: Int,
-    median: Int,
+    median: Int?,
     award: Int,
     onAward: (Int) -> Unit,
     rationale: String,
@@ -529,7 +602,7 @@ private fun RulingControls(
         VGap(Space.s)
         Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
             Chip("Nil", selected = award == 0, onClick = { onAward(0) })
-            Chip("Median", selected = award == median, onClick = { onAward(median) })
+            if (median != null) Chip("Median", selected = award == median, onClick = { onAward(median) })
             Chip("Full", selected = award == ceiling, onClick = { onAward(ceiling) })
         }
 
@@ -544,8 +617,7 @@ private fun RulingControls(
         )
         VGap(6.dp)
         Text(
-            if (rationale.isBlank()) "A ruling can't be issued without a reason. It's shown to both parties."
-            else "The rationale is shown to both parties and stored with the ruling.",
+            "Shown to both parties with the ruling.",
             style = GearType.bodyS,
             color = if (rationale.isBlank()) GearColor.Warning700 else GearText.tertiary,
         )

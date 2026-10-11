@@ -30,18 +30,15 @@ class CaptureScreens : FunctionalTest() {
 
     private val ref = Demo.BOOKING_REF
 
-    private fun at(route: String) {
+    private fun at(route: String, settleMs: Long = 1_500) {
         relaunch(route)
-        Thread.sleep(1_500) // photographs decode off the main thread
-        shot("app_$route")
+        Thread.sleep(settleMs) // photographs decode off the main thread; a camera takes longer to start
+        shot("app_" + route.replace('/', '_'))
     }
 
-    private fun reset() = runBlocking { c.demo.reset() }
+    private fun reset(handle: String = Seed.ME) = runBlocking { c.demo.reset(handle) }
 
-    private fun capture(phase: Phase, angles: List<String> = c.evidence.angles) = runBlocking {
-        c.evidence.startCapture(phase)
-        angles.forEach { c.evidence.capture(ref, phase, it) }
-    }
+    private fun capture(phase: Phase, angles: List<String> = anglesOf(ref)) = shoot(ref, phase, angles)
 
     @Test
     fun captureEveryScreen() {
@@ -52,17 +49,22 @@ class CaptureScreens : FunctionalTest() {
             "s01", "s02", "s03", "s04", "s05", "s06", "s07", "s29", "s30", "s39", "s42",
             "s08", "s09", "s10", "s11",
             "s32", "s35", "s37", "s41",
-            "s19", "s20", "s21", "s22", "s23", "s24", "s25", "s26", "s27", "s28", "s36",
+            "s19", "s20", "s21", "s22", "s23", "s36",
         ).forEach { reset(); at(it) }
+
+        // The owner's console belongs to Kavitha, so it is captured signed in as her.
+        listOf("s24", "s25", "s26", "s27", "s28").forEach { reset(Seed.OWNER); at(it) }
 
         // After a booking: confirmation, the thread it writes to, the bell.
         reset(); book()
-        listOf("s12", "s33", "s38", "s13", "s14").forEach { at(it) }
+        c.money.openThread(Seed.OWNER)
+        listOf("s12", "s33", "s38", "s13").forEach { at(it) }
+        at("s14", settleMs = 5_000)
 
         // Mid-handover: three angles shot, one mark recorded, then all seven.
         runBlocking { c.evidence.enterCode(ref, Seed.handoverCode(ref)) }
-        capture(Phase.PICKUP, c.evidence.angles.take(3))
-        at("s15")
+        capture(Phase.PICKUP, anglesOf(ref).take(3))
+        at("s15", settleMs = 5_000)
         runBlocking {
             c.evidence.addMark(ref, Phase.PICKUP, Demo.PICKUP_MARK.area, Demo.PICKUP_MARK.severity, Demo.PICKUP_MARK.note, 0.5f, 0.86f)
         }
@@ -83,11 +85,23 @@ class CaptureScreens : FunctionalTest() {
             c.evidence.finishReturn(ref)
         }
         at("s18")
+        signInAs(Seed.OWNER) // only the owner decides whether a difference is new (DV-42)
+        c.evidence.select(ref)
         at("s18b")
 
-        // The claim, from both sides of the desk.
+        // The claim, from both sides of the desk: the renter's, then the claims desk's.
         play(DemoData.Scenario.CLAIM_OPEN)
         at("s34")
+        signInAs(Seed.ADMIN)
         at("s40")
+
+        // The account screens added for the live app, which are not among the 44:
+        // the three a signed-out visitor sees, then an owner's settings, listings and gear tag.
+        runBlocking { c.session.signOut() }
+        listOf("welcome", "login", "signup").forEach { at(it) }
+        reset(Seed.OWNER)
+        listOf("settings", "listings/mine").forEach { at(it) }
+        c.session.selectListing(Demo.torq.id)
+        at("listings/tag")
     }
 }

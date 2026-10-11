@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.verticalScroll
 import com.gearloop.app.ui.theme.Text
@@ -42,7 +43,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gearloop.app.container
 import com.gearloop.app.data.BookingStatus
 import com.gearloop.app.data.Demo
-import com.gearloop.app.data.DemoClock
+import com.gearloop.app.data.AppClock
 import com.gearloop.app.data.GearItem
 import com.gearloop.app.data.PriceLine
 import com.gearloop.app.data.Protection
@@ -111,12 +112,6 @@ fun S09Protection(nav: Nav) {
         ProgressStepper(step = 2, total = 5)
         VGap(Space.l)
         Text("How do you want to be covered?", style = GearType.headingXl, color = GearText.primary)
-        VGap(Space.s)
-        Text(
-            "A deposit is a hold, not a charge. Protection replaces the hold with an excess.",
-            style = GearType.bodyM,
-            color = GearText.secondary,
-        )
         VGap(Space.l)
 
         Protection.entries.forEach { plan ->
@@ -232,7 +227,12 @@ private val waterSports = setOf("Surfing", "SUP", "Kayaking", "Swimming")
 
 /** The declarations a renter ticks, for the kind of activity the gear is for. */
 private fun waiverChecksFor(item: GearItem): List<String> = when {
-    item.sport in waterSports -> Demo.waiverChecks
+    item.sport == "Surfing" -> Demo.waiverChecks
+    item.sport in waterSports -> listOf(
+        "I can swim 200 m unassisted",
+        "I've paddled before, or I'm going with someone who has",
+        "I'll check the weather and the water before I go out",
+    )
     item.sport == "Cycling" -> listOf(
         "I'll wear a helmet every time I ride",
         "I've ridden off-road before, or I'm going with someone who has",
@@ -370,19 +370,13 @@ fun S10Waiver(nav: Nav) {
                 }
             }
         }
-        VGap(Space.s)
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            GearIcon(
-                if (read) Lucide.CircleCheck else Lucide.Circle,
-                null,
-                size = IconSize.s,
-                tint = if (read) GearColor.Success500 else GearColor.Chalk400,
-            )
-            Text(
-                if (read) "Read to the end" else "Read $readPercent% so far",
-                style = GearType.bodyS,
-                color = if (read) GearColor.Success500 else GearText.tertiary,
-            )
+        // Until then the footer says how much is left to read.
+        if (read) {
+            VGap(Space.s)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                GearIcon(Lucide.CircleCheck, null, size = IconSize.s, tint = GearColor.Success500)
+                Text("Read to the end", style = GearType.bodyS, color = GearColor.Success500)
+            }
         }
 
         VGap(Space.l)
@@ -413,7 +407,7 @@ fun S10Waiver(nav: Nav) {
                 VGap(4.dp)
                 Text(
                     if (draft?.waiverAt != null && draft.waiverName == signature.trim()) "Signed ${stamp(draft.waiverAt)}"
-                    else "Signs ${stamp(DemoClock.now())} when you accept",
+                    else "Signs ${stamp(AppClock.now())} when you accept",
                     style = GearType.dataS,
                     color = GearText.tertiary,
                 )
@@ -426,7 +420,7 @@ fun S10Waiver(nav: Nav) {
 
         VGap(Space.m)
         Text(
-            "Waiver v2.1 · also available in தமிழ் and සිංහල",
+            "Waiver v2.1",
             style = GearType.bodyS,
             color = GearText.tertiary,
         )
@@ -435,12 +429,6 @@ fun S10Waiver(nav: Nav) {
 }
 
 /* ------------------------------------------------------------------ S-11 */
-
-private val paymentMethods = listOf(
-    Triple(Lucide.CreditCard, "Visa •••• 4471", "Expires 09/28"),
-    Triple(Lucide.Smartphone, "eZ Cash", "077 ••• ••••"),
-    Triple(Lucide.Banknote, "Cash on pickup", "Deposit still held"),
-)
 
 /**
  * S-11 · Read the draft and its bill; Update the payment method and the extras;
@@ -456,6 +444,9 @@ fun S11ReviewPay(nav: Nav) {
     val draft = rememberDraft(vm)
     var expanded by rememberSaveable { mutableStateOf(false) }
     var discarding by rememberSaveable { mutableStateOf(false) }
+    var addingCard by rememberSaveable { mutableStateOf(false) }
+    val profile by vm.profile.collectAsStateWithLifecycle()
+    val wallet by vm.walletAvailable.collectAsStateWithLifecycle()
 
     if (draft == null) {
         GearScreen(appBar = { AppBar(onBack = { nav.back() }) }) {}
@@ -476,7 +467,10 @@ fun S11ReviewPay(nav: Nav) {
                 if (signed) {
                     GearButton(
                         if (item.instantBook) "Confirm and pay" else "Send request",
-                        { vm.confirm { nav.to("s12") } },
+                        // The checkout steps are spent once the booking exists, so
+                        // they come off the stack: Back from the confirmation is
+                        // the listing, not a payment form with nothing in it.
+                        { vm.confirm { nav.finishFlow("s12", flowStart = "s07") } },
                         size = ButtonSize.M,
                     )
                 } else {
@@ -515,7 +509,6 @@ fun S11ReviewPay(nav: Nav) {
                 "${extra.name} · ${lkr(extra.perDay)} a day",
                 draft.includeExtras,
                 { vm.setExtras(it) },
-                helper = "Offered by ${item.owner.name.substringBefore(' ')}. Take it off if you have your own.",
             )
         }
 
@@ -544,7 +537,7 @@ fun S11ReviewPay(nav: Nav) {
         VGap(Space.m)
         Banner(
             text = if (quote.depositHold > 0) {
-                "${lkr(quote.depositHold)} will be held on your card, not charged. It's released within 24 h of return."
+                "${lkr(quote.depositHold)} is held, not charged. It's released within 24 h of return."
             } else {
                 "No deposit with ${draft.protection.label} protection. Nothing is held on your card."
             },
@@ -554,10 +547,37 @@ fun S11ReviewPay(nav: Nav) {
         VGap(Space.l)
         Eyebrow("Payment method")
         VGap(Space.s)
-        paymentMethods.forEachIndexed { i, (icon, title, sub) ->
-            PaymentRow(icon, title, sub, draft.paymentMethod == i) { vm.setPaymentMethod(i) }
-            VGap(Space.s)
+        // The member's own card, their wallet balance, or cash to the owner.
+        val card = profile?.card
+        PaymentRow(
+            Lucide.CreditCard,
+            card?.label ?: "Card",
+            if (card != null) "Expires ${card.expiry}" else "No card saved yet",
+            draft.paymentMethod == MoneyRepository.PAY_CARD,
+        ) { if (card == null) addingCard = true else vm.setPaymentMethod(MoneyRepository.PAY_CARD) }
+        if (card == null) {
+            GearLink("Add a card", { addingCard = true }, icon = Lucide.Plus)
         }
+        VGap(Space.s)
+        PaymentRow(
+            Lucide.Wallet,
+            "GearLoop wallet",
+            if (wallet >= quote.total) "${lkr(wallet)} available" else "${lkr(wallet)} available · not enough",
+            draft.paymentMethod == MoneyRepository.PAY_WALLET,
+        ) { vm.setPaymentMethod(MoneyRepository.PAY_WALLET) }
+        // One tap to the top-up, rather than leaving checkout to find the
+        // wallet; Back returns here with the booking as it was.
+        if (draft.paymentMethod == MoneyRepository.PAY_WALLET && wallet < quote.total) {
+            GearLink("Top up your wallet", { nav.to("s35") }, icon = Lucide.Plus)
+        }
+        VGap(Space.s)
+        PaymentRow(
+            Lucide.Banknote,
+            "Cash at pickup",
+            "Pay ${item.owner.name.substringBefore(' ')} when you collect it",
+            draft.paymentMethod == MoneyRepository.PAY_CASH,
+        ) { vm.setPaymentMethod(MoneyRepository.PAY_CASH) }
+        VGap(Space.s)
 
         VGap(Space.m)
         Eyebrow("Cancellation")
@@ -566,7 +586,7 @@ fun S11ReviewPay(nav: Nav) {
 
         VGap(Space.m)
         Text(
-            "By confirming you agree to the GearLoop rental terms, the waiver you signed, " +
+            "By confirming you agree to the rental terms, your signed waiver " +
                 "and ${item.owner.name.substringBefore(' ')}'s house rules." +
                 if (!item.instantBook) " Nothing is charged until the owner accepts." else "",
             style = GearType.bodyS,
@@ -577,6 +597,12 @@ fun S11ReviewPay(nav: Nav) {
         VGap(Space.section)
     }
 
+    if (addingCard) {
+        com.gearloop.app.screens.account.AddCardDialog(vm, onSaved = { vm.setPaymentMethod(MoneyRepository.PAY_CARD) }) {
+            addingCard = false
+        }
+    }
+
     if (discarding) {
         GearDialog(
             title = "Discard this booking?",
@@ -584,10 +610,12 @@ fun S11ReviewPay(nav: Nav) {
             confirmLabel = "Keep it",
             onConfirm = { discarding = false },
             destructiveLabel = "Discard",
-            onDestructive = { discarding = false; vm.discardDraft { nav.back() } },
+            // Out of checkout altogether, to the listing. One step back was the
+            // waiver, which started a fresh draft as soon as it opened again.
+            onDestructive = { discarding = false; vm.discardDraft { nav.backTo("s07") } },
         ) {
             Text(
-                "Your dates, plan and signature for ${item.shortTitle} will be cleared. Nothing has been charged.",
+                "Your dates, plan and signature will be cleared. Nothing has been charged.",
                 style = GearType.bodyM,
                 color = GearText.secondary,
             )
@@ -667,7 +695,7 @@ fun S12Confirmed(nav: Nav) {
     val finished = booking.status == BookingStatus.RETURNED || booking.status == BookingStatus.COMPLETED
 
     val timeline = when {
-        cancelled -> listOf(TimelineNode(stamp(DemoClock.now()), "Booking ${booking.status.label.lowercase()}", TimelineNode.State.DONE))
+        cancelled -> listOf(TimelineNode(stamp(AppClock.now()), "Booking ${booking.status.label.lowercase()}", TimelineNode.State.DONE))
         requested -> listOf(
             TimelineNode("Now", "$owner has your request", TimelineNode.State.DONE),
             TimelineNode(booking.respondBy?.let(::dayTime) ?: "Within 24 h", "$owner accepts or declines", TimelineNode.State.CURRENT),
@@ -716,51 +744,62 @@ fun S12Confirmed(nav: Nav) {
         }
     }
 
+    // The hero runs pine up behind the status bar; the bottom is the light page.
+    SystemBarIcons(darkSurface = true, darkNavigationBar = false)
     Column(
         Modifier
             .fillMaxSize()
             .background(GearSurface.app)
             .verticalScroll(rememberSavedScrollState()),
     ) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .height(360.dp)
-                .background(GearColor.Pine800)
-                .padding(horizontal = Space.screen),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Box(
+        Box(Modifier.fillMaxWidth()) {
+            Column(
                 Modifier
-                    .size(88.dp)
-                    .clip(GearShape.full)
-                    .border(3.dp, GearColor.HiVis500, GearShape.full),
-                contentAlignment = Alignment.Center,
+                    .fillMaxWidth()
+                    .height(360.dp)
+                    .background(GearColor.Pine800)
+                    .padding(horizontal = Space.screen),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                GearIcon(
+                Box(
+                    Modifier
+                        .size(88.dp)
+                        .clip(GearShape.full)
+                        .border(3.dp, GearColor.HiVis500, GearShape.full),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    GearIcon(
+                        when {
+                            cancelled -> Lucide.X
+                            requested -> Lucide.Hourglass
+                            else -> Lucide.Check
+                        },
+                        null, size = 44.dp, tint = GearColor.HiVis500, strokeWidth = 2.5f,
+                    )
+                }
+                VGap(Space.l)
+                Text(
                     when {
-                        cancelled -> Lucide.X
-                        requested -> Lucide.Hourglass
-                        else -> Lucide.Check
+                        cancelled -> "Booking ${booking.status.label.lowercase()}"
+                        requested -> "Request sent"
+                        booking.status == BookingStatus.COMPLETED -> "Rental complete"
+                        booking.status == BookingStatus.RETURNED -> "Returned"
+                        else -> "You're booked"
                     },
-                    null, size = 44.dp, tint = GearColor.HiVis500, strokeWidth = 2.5f,
+                    style = GearType.displayXl,
+                    color = GearText.onDark,
                 )
+                VGap(Space.s)
+                Text(booking.ref, style = GearType.dataL, color = GearColor.HiVis500)
             }
-            VGap(Space.l)
-            Text(
-                when {
-                    cancelled -> "Booking ${booking.status.label.lowercase()}"
-                    requested -> "Request sent"
-                    booking.status == BookingStatus.COMPLETED -> "Rental complete"
-                    booking.status == BookingStatus.RETURNED -> "Returned"
-                    else -> "You're booked"
-                },
-                style = GearType.displayXl,
-                color = GearText.onDark,
+            // The way out was only the system Back, which used to land in the
+            // emptied checkout. Close returns to wherever the booking was opened from.
+            GearIconButton(
+                Lucide.X, "Close", { nav.back() },
+                Modifier.align(Alignment.TopStart).statusBarsPadding().padding(horizontal = Space.sm, vertical = Space.s),
+                tone = IconButtonTone.DARK, iconSize = IconSize.l,
             )
-            VGap(Space.s)
-            Text(booking.ref, style = GearType.dataL, color = GearColor.HiVis500)
         }
 
         // The card overlaps the dark panel above it by 40dp.
@@ -808,7 +847,8 @@ fun S12Confirmed(nav: Nav) {
                     when {
                         finished -> "See the return check"
                         pickedUp -> "Open the rental"
-                        else -> "View booking"
+                        // Named for where it goes, as the Rentals tab names it.
+                        else -> "View pickup details"
                     },
                     {
                         vm.selectBooking(booking.ref)

@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import com.gearloop.app.ui.theme.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -41,7 +42,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gearloop.app.data.Demo
-import com.gearloop.app.data.DemoClock
+import com.gearloop.app.data.AppClock
 import com.gearloop.app.data.GearItem
 import com.gearloop.app.data.Person
 import com.gearloop.app.data.ProposalStatus
@@ -50,9 +51,9 @@ import com.gearloop.app.data.grouped
 import com.gearloop.app.data.lkr
 import com.gearloop.app.data.repo.CycleLeg
 import com.gearloop.app.data.repo.Proposal
-import com.gearloop.app.data.repo.Seed
 import com.gearloop.app.data.stopwatch
 import com.gearloop.app.nav.Nav
+import com.gearloop.app.container
 import com.gearloop.app.screens.MainTab
 import com.gearloop.app.screens.MainTabBar
 import com.gearloop.app.ui.components.*
@@ -104,6 +105,9 @@ fun S19SwapMatchFeed(nav: Nav) {
     val cycle by vm.cycle.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var about by rememberSaveable { mutableStateOf(false) }
+    val me = currentMe()
+    // Looks for new trades for whatever the member has listed, quietly.
+    LaunchedEffect(me) { vm.refreshMatches() }
 
     // Lazy: each match card carries both sides of the trade as photographs.
     GearLazyScreen(
@@ -124,11 +128,25 @@ fun S19SwapMatchFeed(nav: Nav) {
         when (tab) {
             0 -> {
                 item(key = "banner") {
-                    Banner(
-                        text = if (matches.isEmpty()) "No matches left. Hidden ones come back if you reset the demo."
-                        else "We found ${matches.size} trades using your Burton Custom 158.",
-                        kind = BannerKind.INFO,
-                    )
+                    val gives = matches.map { it.offer.give.shortTitle }.distinct()
+                    if (matches.isEmpty()) {
+                        EmptyState(
+                            icon = Lucide.ArrowRightLeft,
+                            headline = if (vm.myGear().isEmpty()) "Nothing to swap yet" else "No trades right now",
+                            body = if (vm.myGear().isEmpty()) "List something you own and trades for it appear here."
+                            else "Check back as more gear is listed.",
+                            actionLabel = if (vm.myGear().isEmpty()) "Go to your closet" else "Look again",
+                            onAction = { if (vm.myGear().isEmpty()) nav.to("s36") else vm.refreshMatches(announce = true) },
+                        )
+                    } else {
+                        Banner(
+                            text = "We found ${matches.size} ${if (matches.size == 1) "trade" else "trades"} using your " +
+                                if (gives.size == 1) "${gives.first()}." else "gear.",
+                            kind = BannerKind.INFO,
+                            action = "Look again",
+                            onAction = { vm.refreshMatches(announce = true) },
+                        )
+                    }
                     VGap(Space.m)
                 }
                 items(matches, key = { it.id }) { match ->
@@ -147,15 +165,7 @@ fun S19SwapMatchFeed(nav: Nav) {
                 }
             }
             1 -> {
-                item(key = "browse-note") {
-                    Text(
-                        "Everything listed nearby. Open one to rent it, or message the owner about a swap.",
-                        style = GearType.bodyS,
-                        color = GearText.secondary,
-                    )
-                    VGap(Space.m)
-                }
-                items(listings.filter { it.owner.handle != Seed.ME && it.status == com.gearloop.app.data.ListingStatus.PUBLISHED }, key = { it.id }) { item ->
+                items(listings.filter { it.owner.handle != me && it.status == com.gearloop.app.data.ListingStatus.PUBLISHED }, key = { it.id }) { item ->
                     ListingCard(
                         item, { discovery.select(item); nav.to("s07") }, layout = ListingLayout.LIST,
                         onToggleSave = { discovery.toggleSaved(item) },
@@ -169,7 +179,7 @@ fun S19SwapMatchFeed(nav: Nav) {
                         EmptyState(
                             icon = Lucide.ArrowRightLeft,
                             headline = "No proposals yet",
-                            body = "Propose a swap from a match and it is kept here, with every round of the negotiation.",
+                            body = "Swaps you propose from a match appear here.",
                         )
                     }
                 }
@@ -192,9 +202,9 @@ fun S19SwapMatchFeed(nav: Nav) {
             dismissLabel = "Close",
         ) {
             Text(
-                "Both items are valued the same way, from their new price, their age and their condition grade. " +
-                    "If one is worth more, cash balances it, held in escrow until both of you confirm the swap is done. " +
-                    "A three-way loop is offered when no two people want each other's gear directly.",
+                "Both items are valued from their new price, age and condition grade. " +
+                    "If one is worth more, cash balances it, held in escrow until you both confirm. " +
+                    "A three-way loop is offered when no two-way trade works.",
                 style = GearType.bodyM,
                 color = GearText.secondary,
             )
@@ -245,7 +255,7 @@ private fun ThreeWayCard(legs: List<CycleLeg>?, onClick: () -> Unit) {
             LoopDiagram(Modifier.fillMaxWidth().height(190.dp), compact = true, legs = legs)
             VGap(Space.sm)
             Text(
-                "None of you can trade directly. Together, all three of you get what you want.",
+                "No two-way trade works, but a loop of three does.",
                 style = GearType.bodyS,
                 color = GearText.secondary,
             )
@@ -259,6 +269,9 @@ private fun ThreeWayCard(legs: List<CycleLeg>?, onClick: () -> Unit) {
 }
 
 /* ------------------------------------------------------------------ S-20 */
+
+/** Building a proposal: what is offered (S-20), then the cash that balances it (S-21). */
+private const val SWAP_STEPS = 2
 
 /**
  * S-20 · Read the proposal and both sides' gear; Update what is given and what
@@ -296,7 +309,9 @@ fun S20BuildProposal(nav: Nav) {
             }
         },
     ) {
-        ProgressStepper(step = 1, total = 3)
+        // Two steps, this and the balance on S-21. It counted to three, with
+        // nothing after the first to say which step was which.
+        ProgressStepper(step = 1, total = SWAP_STEPS)
         VGap(Space.l)
         Text("What are you offering?", style = GearType.headingXl, color = GearText.primary)
 
@@ -354,7 +369,9 @@ private fun SwapPickRow(item: GearItem, fmv: Int, selected: Boolean, onClick: ()
             Text(item.shortTitle, style = GearType.labelL, color = GearText.primary, maxLines = 1)
             VGap(3.dp)
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("FMV ${grouped(fmv)}", style = GearType.dataM, color = GearText.secondary)
+                // "Worth", not "FMV": the abbreviation meant nothing to anyone
+                // who doesn't trade for a living.
+                Text("Worth ${lkr(fmv)}", style = GearType.dataM, color = GearText.secondary)
                 Spacer(Modifier.width(Space.s))
                 StatusBadge("Grade ${item.grade.letter}", GearColor.Chalk600)
             }
@@ -390,14 +407,20 @@ fun S21FairnessBoot(nav: Nav) {
     val remaining = gap - bootAmount
     // Relative to the more valuable side, the way the readout is phrased.
     val percent = (remaining * 100f / maxOf(p.getValue, 1)).roundToInt()
-    val them = p.counterparty.name.substringBefore(' ')
+    val proposer = p.proposer.handle == currentMe()
+    val them = (if (proposer) p.counterparty else p.proposer).name.substringBefore(' ')
 
     GearScreen(
         appBar = { AppBar(title = p.ref, onBack = { nav.back() }) },
         footer = {
             StickyFooter {
                 GearButton(
-                    if (p.status == ProposalStatus.COUNTERED) "Send counter-offer" else if (p.status == ProposalStatus.SENT) "Update proposal" else "Send proposal",
+                    when {
+                        !proposer -> "Send counter-offer"
+                        p.status == ProposalStatus.COUNTERED -> "Send counter-offer"
+                        p.status == ProposalStatus.SENT -> "Update proposal"
+                        else -> "Send proposal"
+                    },
                     { vm.send(bootAmount) { nav.to("s22") } },
                     Modifier.fillMaxWidth(),
                     enabled = p.open,
@@ -406,6 +429,11 @@ fun S21FairnessBoot(nav: Nav) {
         },
     ) {
         VGap(Space.s)
+        // Step 2 while the proposal is being built; a counter-offer is a reply, not a step.
+        if (p.status == ProposalStatus.DRAFT) {
+            ProgressStepper(step = 2, total = SWAP_STEPS)
+            VGap(Space.l)
+        }
         Text("Is this a fair trade?", style = GearType.headingXl, color = GearText.primary)
 
         VGap(Space.m)
@@ -452,27 +480,26 @@ fun S21FairnessBoot(nav: Nav) {
         GearDivider()
         VGap(Space.l)
 
-        Text("Add cash to balance it", style = GearType.headingM, color = GearText.primary)
+        Text(if (proposer) "Add cash to balance it" else "Cash $them adds to balance it", style = GearType.headingM, color = GearText.primary)
         VGap(Space.s)
         GearSlider(
             value = boot,
             onValueChange = { boot = it },
             valueLabel = lkr(bootAmount),
-            label = "Cash you add",
+            label = if (proposer) "Cash you add" else "Cash $them adds",
         )
         VGap(Space.s)
         Text(
-            if (bootAmount > 0) "You pay $them ${lkr(bootAmount)}"
-            else "Straight swap — no cash either way",
+            when {
+                bootAmount == 0 -> "Straight swap — no cash either way"
+                proposer -> "You pay $them ${lkr(bootAmount)}"
+                else -> "$them pays you ${lkr(bootAmount)}"
+            },
             style = GearType.bodyM,
             color = GearText.primary,
         )
         VGap(6.dp)
-        Text(
-            "Escrow holds it until both of you confirm the trade is complete.",
-            style = GearType.bodyS,
-            color = GearText.tertiary,
-        )
+        Text("Held in escrow until you both confirm.", style = GearType.bodyS, color = GearText.tertiary)
 
         VGap(Space.m)
         GearButton(
@@ -544,9 +571,13 @@ fun S22ProposalDetail(nav: Nav) {
     val people by vm.people.collectAsStateWithLifecycle()
     var withdrawing by rememberSaveable { mutableStateOf(false) }
     val p = proposalState ?: return NoProposal(nav)
-    val me = people[Seed.ME] ?: Demo.nirmal
-    val them = p.counterparty.name.substringBefore(' ')
-    val left = ChronoUnit.MILLIS.between(DemoClock.now(), p.expiresAt)
+    val meHandle = currentMe()
+    val proposer = p.proposer.handle == meHandle
+    val other = if (proposer) p.counterparty else p.proposer
+    val me = people[meHandle] ?: p.proposer
+    val them = other.name.substringBefore(' ')
+    val myMove = vm.myMove(p)
+    val left = ChronoUnit.MILLIS.between(AppClock.now(), p.expiresAt)
 
     GearScreen(
         appBar = {
@@ -571,21 +602,22 @@ fun S22ProposalDetail(nav: Nav) {
         footer = {
             StickyFooter {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                    when (p.status) {
-                        ProposalStatus.COUNTERED -> {
+                    when {
+                        p.open && myMove && p.status != ProposalStatus.DRAFT -> {
+                            GearButton("Decline", { vm.decline() }, type = ButtonType.GHOST, size = ButtonSize.M)
                             GearButton("Counter", { nav.to("s21") }, Modifier.weight(1f), type = ButtonType.SECONDARY, size = ButtonSize.M)
                             GearButton("Accept", { vm.accept() }, Modifier.weight(1f), size = ButtonSize.M)
                         }
-                        ProposalStatus.SENT -> {
-                            GearButton("Withdraw", { withdrawing = true }, Modifier.weight(1f), type = ButtonType.SECONDARY, size = ButtonSize.M)
-                            GearButton("Change offer", { nav.to("s21") }, Modifier.weight(1f), size = ButtonSize.M)
+                        p.status == ProposalStatus.SENT || p.status == ProposalStatus.COUNTERED -> {
+                            if (proposer) GearButton("Withdraw", { withdrawing = true }, Modifier.weight(1f), type = ButtonType.SECONDARY, size = ButtonSize.M)
+                            GearButton("Message $them", { vm.openThread(other.handle); nav.to("s33") }, Modifier.weight(1f), size = ButtonSize.M)
                         }
-                        ProposalStatus.DRAFT -> {
+                        p.status == ProposalStatus.DRAFT -> {
                             GearButton("Delete draft", { withdrawing = true }, Modifier.weight(1f), type = ButtonType.SECONDARY, size = ButtonSize.M)
                             GearButton("Continue", { nav.to("s21") }, Modifier.weight(1f), size = ButtonSize.M)
                         }
-                        ProposalStatus.ACCEPTED -> GearButton(
-                            "Message $them", { vm.openThread(p.counterparty.handle); nav.to("s33") }, Modifier.fillMaxWidth(), size = ButtonSize.M,
+                        p.status == ProposalStatus.ACCEPTED -> GearButton(
+                            "Message $them", { vm.openThread(other.handle); nav.to("s33") }, Modifier.fillMaxWidth(), size = ButtonSize.M,
                         )
                         else -> GearButton("Back to matches", { nav.tab("s19") }, Modifier.fillMaxWidth(), size = ButtonSize.M, type = ButtonType.SECONDARY)
                     }
@@ -606,11 +638,11 @@ fun S22ProposalDetail(nav: Nav) {
             )
             Spacer(Modifier.width(Space.s))
             Text(
-                when (p.status) {
-                    ProposalStatus.COUNTERED -> "$them has answered. Your move."
-                    ProposalStatus.SENT -> "Waiting for $them."
-                    ProposalStatus.DRAFT -> "Not sent yet."
-                    ProposalStatus.ACCEPTED -> "Agreed. Arrange the handover."
+                when {
+                    p.open && myMove && p.status != ProposalStatus.DRAFT -> "$them has answered. Your move."
+                    p.status == ProposalStatus.SENT || p.status == ProposalStatus.COUNTERED -> "Waiting for $them."
+                    p.status == ProposalStatus.DRAFT -> "Not sent yet."
+                    p.status == ProposalStatus.ACCEPTED -> "Agreed. Arrange the handover."
                     else -> "This proposal is closed."
                 },
                 style = GearType.bodyS,
@@ -618,7 +650,7 @@ fun S22ProposalDetail(nav: Nav) {
             )
         }
         VGap(Space.m)
-        SwapItemCard(p.give, p.giveValue, "YOU GIVE", me)
+        SwapItemCard(if (proposer) p.give else p.get, if (proposer) p.giveValue else p.getValue, "YOU GIVE", me)
         Box(Modifier.fillMaxWidth().padding(vertical = Space.s), contentAlignment = Alignment.Center) {
             Box(
                 Modifier.size(40.dp).clip(CircleShape).background(GearColor.Marine100),
@@ -627,15 +659,24 @@ fun S22ProposalDetail(nav: Nav) {
                 GearIcon(Lucide.ArrowRightLeft, null, size = IconSize.m, tint = GearColor.Marine500)
             }
         }
-        SwapItemCard(p.get, p.getValue, "YOU GET", p.counterparty)
+        SwapItemCard(if (proposer) p.get else p.give, if (proposer) p.getValue else p.giveValue, "YOU GET", other)
 
         VGap(Space.l)
-        FairnessMeter(
-            percent = (p.remainingGap * 100f / maxOf(p.getValue, 1)).roundToInt(),
-            leftValue = p.giveValue + p.boot,
-            rightValue = p.getValue,
-            deltaAmount = p.remainingGap,
-        )
+        if (proposer) {
+            FairnessMeter(
+                percent = (p.remainingGap * 100f / maxOf(p.getValue, 1)).roundToInt(),
+                leftValue = p.giveValue + p.boot,
+                rightValue = p.getValue,
+                deltaAmount = p.remainingGap,
+            )
+        } else {
+            FairnessMeter(
+                percent = (-p.remainingGap * 100f / maxOf(p.giveValue + p.boot, 1)).roundToInt(),
+                leftValue = p.getValue,
+                rightValue = p.giveValue + p.boot,
+                deltaAmount = -p.remainingGap,
+            )
+        }
         if (p.boot > 0) {
             VGap(Space.s)
             Row(
@@ -649,7 +690,7 @@ fun S22ProposalDetail(nav: Nav) {
                 GearIcon(Lucide.HandCoins, null, size = IconSize.m, tint = GearColor.Success500)
                 Spacer(Modifier.width(Space.s))
                 Text(
-                    "${lkr(p.boot)} from you, held in escrow",
+                    if (proposer) "${lkr(p.boot)} from you, held in escrow" else "${lkr(p.boot)} from $them, held in escrow",
                     style = GearType.bodyM,
                     color = GearColor.Success500,
                 )
@@ -741,7 +782,7 @@ fun S22ProposalDetail(nav: Nav) {
         ) {
             Text(
                 if (p.status == ProposalStatus.DRAFT) "Nothing has been sent to $them."
-                else "$them will see that you've withdrawn. You can propose again from the match.",
+                else "You can propose again from the match.",
                 style = GearType.bodyM,
                 color = GearText.secondary,
             )
@@ -762,7 +803,7 @@ private fun SwapItemCard(item: GearItem, fmv: Int, label: String, owner: Person)
                 GearTag(item.tagLine)
                 VGap(Space.sm)
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("FMV ${grouped(fmv)}", style = GearType.dataL, color = GearText.primary)
+                    Text("Worth ${lkr(fmv)}", style = GearType.dataL, color = GearText.primary)
                     Spacer(Modifier.weight(1f))
                     Avatar(owner, size = 28.dp)
                     Spacer(Modifier.width(6.dp))
@@ -774,9 +815,6 @@ private fun SwapItemCard(item: GearItem, fmv: Int, label: String, owner: Person)
 }
 
 /* ------------------------------------------------------------------ S-23 */
-
-/** When the loop offer lapses: three days from the moment the dataset describes. */
-private val CYCLE_EXPIRES = DemoClock.WORLD_START.plusHours(71).plusMinutes(12).plusSeconds(44)
 
 /**
  * S-23 · Read the loop and who has accepted; Update the renter's own seat —
@@ -794,10 +832,10 @@ fun S23CyclePreview(nav: Nav) {
     val cycleState by vm.cycle.collectAsStateWithLifecycle()
     val cycle = cycleState ?: return NoProposal(nav)
     val legs = cycle.legs
-    val mine = cycle.members.firstOrNull { it.person.handle == Seed.ME }
-    val gets = cycle.receivedBy(Seed.ME)
+    val me = currentMe()
+    val mine = cycle.members.firstOrNull { it.person.handle == me }
+    val gets = cycle.receivedBy(me)
     val myAnswer = mine?.accepted
-    val left = ChronoUnit.MILLIS.between(DemoClock.now(), CYCLE_EXPIRES)
     val delta = if (mine != null && gets != null) ((gets.givesValue - mine.givesValue) * 100f / mine.givesValue).roundToInt() else 0
 
     GearScreen(
@@ -826,7 +864,7 @@ fun S23CyclePreview(nav: Nav) {
         // The outcome first, in one sentence, before any of the mechanism.
         if (mine != null && gets != null) {
             Text(
-                "You give your ${mine.gives.shortTitle} to ${legs.first { it.giver.handle == Seed.ME }.receiver.name.substringBefore(' ')} " +
+                "You give your ${mine.gives.shortTitle} to ${legs.first { it.giver.handle == me }.receiver.name.substringBefore(' ')} " +
                     "and get ${gets.person.name.substringBefore(' ')}'s ${gets.gives.shortTitle}. No cash changes hands.",
                 style = GearType.headingS,
                 color = GearText.primary,
@@ -900,10 +938,22 @@ fun S23CyclePreview(nav: Nav) {
                 .padding(Space.cardPadding),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text(stopwatch(left), style = GearType.dataXl, color = GearText.primary)
+            Text(
+                when {
+                    cycle.declined -> "Off"
+                    cycle.acceptedCount == cycle.members.size -> "Agreed"
+                    else -> "Waiting on ${cycle.members.size - cycle.acceptedCount}"
+                },
+                style = GearType.dataXl,
+                color = GearText.primary,
+            )
             VGap(4.dp)
             Text(
-                if (cycle.declined) "SOMEONE DECLINED · THE LOOP IS OFF" else "ALL THREE MUST ACCEPT",
+                when {
+                    cycle.declined -> "SOMEONE DECLINED · THE LOOP IS OFF"
+                    cycle.acceptedCount == cycle.members.size -> "EVERYONE ACCEPTED · ARRANGE THE HANDOVERS"
+                    else -> "ALL THREE MUST ACCEPT"
+                },
                 style = GearType.labelXs,
                 color = GearText.tertiary,
             )
@@ -911,8 +961,7 @@ fun S23CyclePreview(nav: Nav) {
 
         VGap(Space.m)
         Banner(
-            text = "Nothing moves unless everyone accepts. If anyone declines or time runs out, " +
-                "the whole trade is cancelled and no gear or money changes hands.",
+            text = "If anyone declines or time runs out, the trade is off and nothing changes hands.",
             kind = BannerKind.INFO,
         )
 
@@ -932,16 +981,18 @@ fun S23CyclePreview(nav: Nav) {
                     color = if (delta >= 0) GearColor.Success500 else GearColor.Warning700,
                 )
             }
-            Column(Modifier.weight(1f)) {
-                Text("Cash in the loop", style = GearType.bodyS, color = GearText.tertiary)
-                Text("None", style = GearType.dataL, color = GearText.primary)
-            }
         }
         VGap(Space.section)
     }
 }
 
-private fun name(p: Person) = if (p.handle == Seed.ME) "You" else p.name.substringBefore(' ')
+@Composable
+private fun name(p: Person) = if (p.handle == currentMe()) "You" else p.name.substringBefore(' ')
+
+/** The signed-in member's handle, read where a screen needs to say "you". */
+@Composable
+private fun currentMe(): String =
+    androidx.compose.ui.platform.LocalContext.current.container.session.me.collectAsStateWithLifecycle().value
 
 @Composable
 private fun AcceptRow(person: Person, accepted: Boolean?) {
@@ -952,7 +1003,7 @@ private fun AcceptRow(person: Person, accepted: Boolean?) {
         Avatar(person, size = 36.dp)
         Spacer(Modifier.width(Space.sm))
         Text(
-            if (person.handle == Seed.ME) "${person.name} (you)" else person.name,
+            if (person.handle == currentMe()) "${person.name} (you)" else person.name,
             style = GearType.labelL, color = GearText.primary, modifier = Modifier.weight(1f),
         )
         GearIcon(
@@ -1142,7 +1193,7 @@ private fun LoopNode(
         Avatar(person, size = avatarSize, showTierRing = true)
         // Clears the hi-vis "you" ring, which is drawn 5dp outside the avatar.
         VGap(9.dp)
-        val label = if (person.handle == Seed.ME) "You" else person.name.split(" ").first()
+        val label = if (person.handle == currentMe()) "You" else person.name.split(" ").first()
         Text(
             // labelXs is an uppercase style, so the compact label arrives uppercased.
             if (compact) label.uppercase() else label,
